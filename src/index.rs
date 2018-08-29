@@ -1,6 +1,5 @@
+use elements::{Block, BlockHeader, Transaction, TxIn, TxOut};
 use bincode;
-use bitcoin::blockdata::block::{Block, BlockHeader};
-use bitcoin::blockdata::transaction::{Transaction, TxIn, TxOut};
 use bitcoin::network::serialize::BitcoinHash;
 use bitcoin::network::serialize::{deserialize, serialize};
 use bitcoin::util::hash::Sha256dHash;

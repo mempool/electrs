@@ -1,4 +1,4 @@
-use bitcoin::blockdata::transaction::Transaction;
+use elements::Transaction;
 use bitcoin::network::serialize::{deserialize, serialize};
 use bitcoin::util::address::Address;
 use bitcoin::util::hash::Sha256dHash;
@@ -64,8 +64,6 @@ fn jsonify_header(entry: &HeaderEntry) -> Value {
         "prev_block_hash": header.prev_blockhash.be_hex_string(),
         "merkle_root": header.merkle_root.be_hex_string(),
         "timestamp": header.time,
-        "bits": header.bits,
-        "nonce": header.nonce
     })
 }
 

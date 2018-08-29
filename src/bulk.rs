@@ -1,4 +1,4 @@
-use bitcoin::blockdata::block::Block;
+use elements::Block;
 use bitcoin::network::serialize::BitcoinHash;
 use bitcoin::network::serialize::SimpleDecoder;
 use bitcoin::network::serialize::{deserialize, RawDecoder};

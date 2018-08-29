@@ -1,4 +1,3 @@
-use bitcoin::network::constants::Network;
 use clap::{App, Arg};
 use dirs::home_dir;
 use num_cpus;
@@ -11,6 +10,7 @@ use stderrlog;
 use daemon::CookieGetter;
 
 use errors::*;
+use daemon::Network;
 
 #[derive(Debug)]
 pub struct Config {
@@ -116,6 +116,8 @@ impl Config {
             "mainnet" => Network::Bitcoin,
             "testnet" => Network::Testnet,
             "regtest" => Network::Regtest,
+            "liquid" => Network::Liquid,
+            "liquidregtest" => Network::LiquidRegtest,
             _ => panic!("unsupported Bitcoin network: {:?}", network_name),
         };
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
@@ -125,16 +127,22 @@ impl Config {
             Network::Bitcoin => 8332,
             Network::Testnet => 18332,
             Network::Regtest => 18443,
+            Network::Liquid => 10099,
+            Network::LiquidRegtest => 7041,
         };
         let default_electrum_port = match network_type {
             Network::Bitcoin => 50001,
             Network::Testnet => 60001,
             Network::Regtest => 60401,
+            Network::Liquid => 51000,
+            Network::LiquidRegtest => 51401,
         };
         let default_monitoring_port = match network_type {
             Network::Bitcoin => 4224,
             Network::Testnet => 14224,
             Network::Regtest => 24224,
+            Network::Liquid => 34224,
+            Network::LiquidRegtest => 44224,
         };
 
         let daemon_rpc_addr: SocketAddr = m
@@ -165,6 +173,8 @@ impl Config {
             Network::Bitcoin => (),
             Network::Testnet => daemon_dir.push("testnet3"),
             Network::Regtest => daemon_dir.push("regtest"),
+            Network::Liquid => daemon_dir.push("liquid"),
+            Network::LiquidRegtest => daemon_dir.push("liquidregtest"),
         }
         let cookie = m.value_of("cookie").map(|s| s.to_owned());
 

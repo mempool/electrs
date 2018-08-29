@@ -1,5 +1,4 @@
-use bitcoin::blockdata::block::Block;
-use bitcoin::blockdata::transaction::Transaction;
+use elements::{confidential, Block, Transaction};
 use bitcoin::network::serialize::deserialize;
 use bitcoin::util::hash::Sha256dHash;
 use crypto::digest::Digest;
@@ -206,7 +205,7 @@ impl Query {
                 let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
                 let txn = self
                     .tx_cache
-                    .get_or_else(&txid, || self.load_txn(&txid, tx_row.height))?;
+                    .get_or_else(&txid, || self.load_txn(&txid))?;
                 txns.push(TxnHeight {
                     txn,
                     height: tx_row.height,
@@ -253,11 +252,16 @@ impl Query {
         let txn_id = t.txn.txid();
         for (index, output) in t.txn.output.iter().enumerate() {
             if compute_script_hash(&output.script_pubkey[..]) == script_hash {
+                let value = match output.value {
+                    confidential::Value::Explicit(val) => val,
+                    _ => 0,
+                };
+
                 result.push(FundingOutput {
                     txn_id: txn_id,
                     height: t.height,
                     output_index: index,
-                    value: output.value,
+                    value: value,
                 })
             }
         }
@@ -342,9 +346,8 @@ impl Query {
     }
 
     // Internal API for transaction retrieval
-    fn load_txn(&self, tx_hash: &Sha256dHash, block_height: u32) -> Result<Transaction> {
-        let blockhash = self.lookup_confirmed_blockhash(tx_hash, Some(block_height))?;
-        self.app.daemon().gettransaction(tx_hash, blockhash)
+    fn load_txn(&self, tx_hash: &Sha256dHash) -> Result<Transaction> {
+        self.app.daemon().gettransaction(tx_hash)
     }
 
     // Public API for transaction retrieval (for Electrum RPC)

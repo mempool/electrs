@@ -1,4 +1,4 @@
-use bitcoin::blockdata::transaction::Transaction;
+use elements::Transaction;
 use bitcoin::util::hash::Sha256dHash;
 use hex;
 use std::collections::{BTreeMap, HashMap, HashSet};

@@ -1,4 +1,4 @@
-use bitcoin::blockdata::block::BlockHeader;
+use elements::BlockHeader;
 use bitcoin::network::serialize::BitcoinHash;
 use bitcoin::util::hash::Sha256dHash;
 use std::collections::HashMap;
