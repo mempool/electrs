@@ -358,6 +358,13 @@ impl Query {
             .gettransaction_raw(tx_hash, blockhash, verbose)
     }
 
+    pub fn get_block(&self, blockhash: &Sha256dHash) -> Result<Block> {
+        self.app
+            .daemon()
+            .getblock(blockhash)
+    }
+
+
     pub fn get_headers(&self, heights: &[usize]) -> Vec<HeaderEntry> {
         let index = self.app.index();
         heights

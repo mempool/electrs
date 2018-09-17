@@ -150,6 +150,15 @@ impl Connection {
         Ok(json!(jsonify_header(&entry)))
     }
 
+    fn blockchain_block_get(&self, params: &[Value]) -> Result<Value> {
+        let block_hash = hash_from_value(params.get(0)).chain_err(|| "bad block_hash")?;
+
+        let block = self.query.get_block(&block_hash);
+        let block_hex = hex::encode(serialize(&block.unwrap()).unwrap());
+
+        Ok(json!({"hex": &block_hex}))
+    }
+
     fn blockchain_estimatefee(&self, params: &[Value]) -> Result<Value> {
         let blocks_count = usize_from_value(params.get(0), "blocks_count")?;
         let fee_rate = self.query.estimate_fee(blocks_count); // in BTC/kB
@@ -285,6 +294,7 @@ impl Connection {
             "mempool.get_fee_histogram" => self.mempool_get_fee_histogram(),
             "blockchain.block.headers" => self.blockchain_block_headers(&params),
             "blockchain.block.get_header" => self.blockchain_block_get_header(&params),
+            "blockchain.block.get" => self.blockchain_block_get(&params),
             "blockchain.estimatefee" => self.blockchain_estimatefee(&params),
             "blockchain.relayfee" => self.blockchain_relayfee(),
             "blockchain.address.subscribe" => self.blockchain_address_subscribe(&params),

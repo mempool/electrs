@@ -4,3 +4,5 @@ target
 *.sublime*
 *~
 *.pyc
+.idea/
+start.sh
