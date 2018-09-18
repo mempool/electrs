@@ -14,12 +14,10 @@ readme = "README.md"
 arrayref = "0.3"
 base64 = "0.9"
 bincode = "1.0"
-bitcoin = "0.14"
 chan = "0.1"
 chan-signal = "0.3"
 clap = "2.31"
 dirs = "1.0"
-elements = "0.1.2"
 error-chain = "0.12"
 glob = "0.2"
 hex = "0.3"
@@ -39,3 +37,12 @@ sysconf = ">=0.3.4"
 time = "0.1"
 tiny_http = "0.6"
 hyper = "0.12"
+url = "1.0"
+
+[dependencies.elements]
+version = "0.1.2"
+features = ["serde-feature"] # Doesn't look to work by now
+
+[dependencies.bitcoin]
+version = "0.14"
+
