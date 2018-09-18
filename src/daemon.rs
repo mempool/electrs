@@ -503,15 +503,9 @@ impl Daemon {
     pub fn gettransaction_raw(
         &self,
         txhash: &Sha256dHash,
-        blockhash: Option<Sha256dHash>,
         verbose: bool,
     ) -> Result<Value> {
-        let mut args = json!([txhash.be_hex_string(), verbose]);
-        /*if let Some(blockhash) = blockhash {
-            args.as_array_mut()
-                .unwrap()
-                .push(json!(blockhash.be_hex_string()));
-        }*/ //not working on elements
+        let args = json!([txhash.be_hex_string(), verbose]);
         debug!("gettransaction_raw args {:?}", args);
         Ok(self.request("getrawtransaction", args)?)
     }

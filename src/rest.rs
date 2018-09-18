@@ -17,6 +17,9 @@ use bitcoin::util::hash::Sha256dHash;
 use std::collections::HashMap;
 use url::form_urlencoded;
 use serde::Serialize;
+use lru_cache::LruCache;
+use std::sync::Mutex;
+
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -66,9 +69,12 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
     let addr = ([127, 0, 0, 1], 3000).into();  // TODO take from config
     info!("REST server running on {}", addr);
 
+    let cache = Arc::new(Mutex::new(LruCache::new(100)));
+
     let new_service = move || {
 
         let query = query.clone();
+        let block_cache = cache.clone();
 
         //TODO handle errors using service_fn
         service_fn_ok(move |req: Request<Body>| {
@@ -95,7 +101,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                                     let vec = query.get_headers(&[par]);
                                     match vec.get(0) {
                                         None => bad_request(),
-                                        Some(val) => blocks(&query, &val, limit)
+                                        Some(val) => blocks(&query, &val, limit, &block_cache)
                                     }
                                 },
                                 Err(_) => {
@@ -103,13 +109,13 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                                 }
                             }
                         },
-                        None => last_blocks(&query, limit),
+                        None => last_blocks(&query, limit, &block_cache),
                     }
                 },
                 (&Method::GET, Some(&"block"), Some(par), None) => {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
-                            let block = query.get_block(&par).unwrap();
+                            let block = query.get_block_with_cache(&par, &block_cache).unwrap();
                             json_response(BlockAndTxsHashesValue::from(block))
                         },
                         Err(_) => {
@@ -167,16 +173,16 @@ fn json_response<T: Serialize>(value : T) -> Response<Body> {
         .body(Body::from(value)).unwrap()
 }
 
-fn last_blocks(query: &Arc<Query>, limit: u32) -> Response<Body> {
+fn last_blocks(query: &Arc<Query>, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>) -> Response<Body> {
     let header_entry : HeaderEntry = query.get_best_header().unwrap();
-    blocks(query,&header_entry,limit)
+    blocks(query,&header_entry,limit, block_cache)
 }
 
-fn blocks(query: &Arc<Query>, header_entry: &HeaderEntry, limit: u32) -> Response<Body> {
+fn blocks(query: &Arc<Query>, header_entry: &HeaderEntry, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>) -> Response<Body> {
     let mut values = Vec::new();
     let mut current_hash = header_entry.hash().clone();
     for _ in 0..limit {
-        let block : Block = query.get_block(&current_hash).unwrap();
+        let block : Block = query.get_block_with_cache(&current_hash, block_cache).unwrap();
         current_hash = block.header.prev_blockhash.clone();
         match block.header.height {
             0 => break,

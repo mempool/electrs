@@ -38,6 +38,7 @@ time = "0.1"
 tiny_http = "0.6"
 hyper = "0.12"
 url = "1.0"
+lru-cache = "0.1.1"
 
 [dependencies.elements]
 version = "0.1.2"

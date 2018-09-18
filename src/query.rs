@@ -12,10 +12,12 @@ use index::{compute_script_hash, TxInRow, TxOutRow, TxRow};
 use mempool::Tracker;
 use metrics::Metrics;
 use serde_json::Value;
-use store::{ReadStore, Row};
+use store::ReadStore;
 use util::{FullHash, HashPrefix, HeaderEntry};
+use lru_cache::LruCache;
 
 use errors::*;
+use std::sync::Mutex;
 
 pub struct FundingOutput {
     pub txn_id: Sha256dHash,
@@ -120,12 +122,6 @@ fn merklize(left: Sha256dHash, right: Sha256dHash) -> Sha256dHash {
     Sha256dHash::from_data(&data)
 }
 
-// TODO: the functions below can be part of ReadStore.
-fn txrow_by_txid(store: &ReadStore, txid: &Sha256dHash) -> Option<TxRow> {
-    let key = TxRow::filter_full(&txid);
-    let value = store.get(&key)?;
-    Some(TxRow::from_row(&Row { key, value }))
-}
 
 fn txrows_by_prefix(store: &ReadStore, txid_prefix: &HashPrefix) -> Vec<TxRow> {
     store
@@ -318,33 +314,6 @@ impl Query {
         Ok(Status { confirmed, mempool })
     }
 
-    fn lookup_confirmed_blockhash(
-        &self,
-        tx_hash: &Sha256dHash,
-        block_height: Option<u32>,
-    ) -> Result<Option<Sha256dHash>> {
-        let blockhash = if self.tracker.read().unwrap().get_txn(&tx_hash).is_some() {
-            None // found in mempool (as unconfirmed transaction)
-        } else {
-            // Lookup in confirmed transactions' index
-            let height = match block_height {
-                Some(height) => height,
-                None => {
-                    txrow_by_txid(self.app.read_store(), &tx_hash)
-                        .chain_err(|| format!("not indexed tx {}", tx_hash))?
-                        .height
-                }
-            };
-            let header = self
-                .app
-                .index()
-                .get_header(height as usize)
-                .chain_err(|| format!("missing header at height {}", height))?;
-            Some(*header.hash())
-        };
-        Ok(blockhash)
-    }
-
     // Internal API for transaction retrieval
     fn load_txn(&self, tx_hash: &Sha256dHash) -> Result<Transaction> {
         self.app.daemon().gettransaction(tx_hash)
@@ -352,10 +321,25 @@ impl Query {
 
     // Public API for transaction retrieval (for Electrum RPC)
     pub fn get_transaction(&self, tx_hash: &Sha256dHash, verbose: bool) -> Result<Value> {
-        let blockhash = self.lookup_confirmed_blockhash(tx_hash, /*block_height*/ None)?;
         self.app
             .daemon()
-            .gettransaction_raw(tx_hash, blockhash, verbose)
+            .gettransaction_raw(tx_hash, verbose)
+    }
+
+    pub fn get_block_with_cache(&self, blockhash: &Sha256dHash, block_cache : &Mutex<LruCache<Sha256dHash,Block>> ) -> Result<Block> {
+        let mut cache = block_cache.lock().unwrap();
+        let block = match cache.get_mut(blockhash) {
+            Some(value) => {
+                debug!("HIT");
+                value.clone()
+            },
+            None => {
+                debug!("miss");
+                self.get_block(blockhash)?
+            },
+        };
+        cache.insert(blockhash.clone(), block.clone());
+        Ok(block)
     }
 
     pub fn get_block(&self, blockhash: &Sha256dHash) -> Result<Block> {
