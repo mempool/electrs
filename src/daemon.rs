@@ -507,11 +507,12 @@ impl Daemon {
         verbose: bool,
     ) -> Result<Value> {
         let mut args = json!([txhash.be_hex_string(), verbose]);
-        if let Some(blockhash) = blockhash {
+        /*if let Some(blockhash) = blockhash {
             args.as_array_mut()
                 .unwrap()
                 .push(json!(blockhash.be_hex_string()));
-        }
+        }*/ //not working on elements
+        debug!("gettransaction_raw args {:?}", args);
         Ok(self.request("getrawtransaction", args)?)
     }
 
