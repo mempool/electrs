@@ -20,6 +20,7 @@ extern crate stderrlog;
 extern crate sysconf;
 extern crate time;
 extern crate tiny_http;
+extern crate hyper;
 
 #[macro_use]
 extern crate chan;
@@ -51,3 +52,4 @@ pub mod rpc;
 pub mod signal;
 pub mod store;
 pub mod util;
+pub mod rest;
