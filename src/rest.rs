@@ -264,6 +264,7 @@ fn json_response<T: Serialize>(value : T) -> Response<Body> {
     let value = serde_json::to_string(&value).unwrap();
     Response::builder()
         .header("Content-type","application/json")
+        .header("Access-Control-Allow-Origin", "*")
         .body(Body::from(value)).unwrap()
 }
 
