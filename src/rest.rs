@@ -73,8 +73,8 @@ impl From<Block> for BlockAndTxsValue {
 #[derive(Serialize, Deserialize)]
 struct TransactionValue {
     txid: Sha256dHash,
-    input: Vec<TxInValue>,
-    output: Vec<TxOutValue>,
+    vin: Vec<TxInValue>,
+    vout: Vec<TxOutValue>,
     confirmations: Option<u32>,
     hex: Option<String>,
     block_hash: Option<String>,
@@ -83,13 +83,13 @@ struct TransactionValue {
 
 impl From<Transaction> for TransactionValue {
     fn from(tx: Transaction) -> Self {
-        let input = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
-        let output = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
+        let vin = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
+        let vout = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
 
         TransactionValue {
             txid: tx.txid(),
-            input,
-            output,
+            vin,
+            vout,
             confirmations: None,
             hex: None,
             block_hash: None,
@@ -102,15 +102,17 @@ impl From<Transaction> for TransactionValue {
 struct TxInValue {
     outpoint: OutPoint,
     script_sig: Script,
+    is_coinbase: bool,
 }
 
 
 impl From<TxIn> for TxInValue {
     fn from(txin: TxIn) -> Self {
-
+        let is_coinbase = txin.is_coinbase();
         TxInValue {
             outpoint: txin.previous_output,
             script_sig: txin.script_sig,
+            is_coinbase,
         }
     }
 }
@@ -192,7 +194,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                         }
                     }
                 },
-                (&Method::GET, Some(&"block"), Some(par), Some(&"txs")) => {
+                (&Method::GET, Some(&"block"), Some(par), Some(&"with-txs")) => {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
                             let block = query.get_block_with_cache(&par, &block_cache).unwrap();
