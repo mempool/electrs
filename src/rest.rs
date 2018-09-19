@@ -133,6 +133,7 @@ struct TxOutValue {
     scriptpubkey_asm: String,
     assetcommitment: String,
     value: Option<u64>,
+    script_type: String,
 }
 
 impl From<TxOut> for TxOutValue {
@@ -145,11 +146,31 @@ impl From<TxOut> for TxOutValue {
         let script = txout.script_pubkey;
         let script_asm = format!("{:?}",script);
 
+        let mut script_type = "";
+        if script.is_empty() {
+            script_type = "empty";
+        } else if script.is_op_return() {
+            script_type = "op_return";
+        } else if script.is_p2pk() {
+            script_type = "p2pk";
+        } else if script.is_p2pkh() {
+            script_type = "p2pkh";
+        } else if script.is_p2sh() {
+            script_type = "p2sh";
+        } else if script.is_v0_p2wpkh() {
+            script_type = "v0_p2wpkh";
+        } else if script.is_v0_p2wsh() {
+            script_type = "v0_p2wsh";
+        } else if script.is_provably_unspendable() {
+            script_type = "provably_unspendable";
+        }
+
         TxOutValue {
             scriptpubkey_hex: script,
             scriptpubkey_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
             assetcommitment: hex::encode(asset),
             value,
+            script_type: script_type.to_string(),
         }
     }
 }
