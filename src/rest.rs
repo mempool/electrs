@@ -79,13 +79,15 @@ struct TransactionValue {
     confirmations: Option<u32>,
     hex: Option<String>,
     block_hash: Option<String>,
-    weight: Option<u32>,
+    size: u32,
+    weight: u32,
 }
 
 impl From<Transaction> for TransactionValue {
     fn from(tx: Transaction) -> Self {
         let vin = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
         let vout = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
+        let bytes = serialize(&tx).unwrap();
 
         TransactionValue {
             txid: tx.txid(),
@@ -94,7 +96,8 @@ impl From<Transaction> for TransactionValue {
             confirmations: None,
             hex: None,
             block_hash: None,
-            weight: None,
+            size: bytes.len() as u32,
+            weight: tx.get_weight() as u32,
         }
     }
 }
@@ -102,7 +105,8 @@ impl From<Transaction> for TransactionValue {
 #[derive(Serialize, Deserialize)]
 struct TxInValue {
     outpoint: OutPoint,
-    script_sig: Script,
+    scriptsig_hex: Script,
+    scriptsig_asm: String,
     is_coinbase: bool,
 }
 
@@ -110,9 +114,13 @@ struct TxInValue {
 impl From<TxIn> for TxInValue {
     fn from(txin: TxIn) -> Self {
         let is_coinbase = txin.is_coinbase();
+        let script = txin.script_sig;
+        let script_asm = format!("{:?}",script);
+
         TxInValue {
             outpoint: txin.previous_output,
-            script_sig: txin.script_sig,
+            scriptsig_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
+            scriptsig_hex: script,
             is_coinbase,
         }
     }
@@ -121,17 +129,15 @@ impl From<TxIn> for TxInValue {
 #[derive(Serialize, Deserialize)]
 struct TxOutValue {
     script_pubkey: Script,
-    asset: String,
+    assetcommitment: String,
 }
 
 impl From<TxOut> for TxOutValue {
     fn from(txout: TxOut) -> Self {
         let asset = serialize(&txout.asset).unwrap();
-        //txout.ct
-
         TxOutValue {
             script_pubkey: txout.script_pubkey,
-            asset: hex::encode(asset),
+            assetcommitment: hex::encode(asset),
         }
     }
 }
@@ -203,14 +209,13 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                             let block_hash = block.header.bitcoin_hash().be_hex_string();
                             let header_entry : HeaderEntry = query.get_best_header().unwrap();
                             let confirmations = header_entry.height() as u32 - block.header.height + 1;
-                            let weights: Vec<u32> = block.txdata.iter().map(|el| el.get_weight() as u32).collect();
                             let mut value = BlockAndTxsValue::from(block);
                             value.block_summary.confirmations = Some(confirmations);
 
-                            for (tx_value, weight) in value.txs.iter_mut().zip(weights.iter()) {
+                            for tx_value in value.txs.iter_mut() {
                                 tx_value.confirmations = Some(confirmations);
                                 tx_value.block_hash = Some(block_hash.clone());
-                                tx_value.weight = Some(*weight)
+
                             }
 
                             json_response(value)
@@ -230,14 +235,10 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                                     let confirmations = value.get("confirmations").unwrap().as_u64().unwrap();
                                     let blockhash = value.get("blockhash").unwrap().as_str().unwrap();
                                     let tx : Transaction = deserialize(&hex::decode(tx_hex).unwrap() ).unwrap();
-                                    let weight = tx.get_weight();
                                     let mut value = TransactionValue::from(tx);
                                     value.confirmations = Some(confirmations as u32);
                                     value.hex = Some(tx_hex.to_string());
                                     value.block_hash = Some(blockhash.to_string());
-
-                                    value.weight = Some(weight as u32);
-
                                     json_response(value)
                                 },
                                 Err(_) => {
