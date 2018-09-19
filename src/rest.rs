@@ -129,20 +129,25 @@ impl From<TxIn> for TxInValue {
 
 #[derive(Serialize, Deserialize)]
 struct TxOutValue {
-    script_pubkey: Script,
+    scriptpubkey_hex: Script,
+    scriptpubkey_asm: String,
     assetcommitment: String,
-    value: Optional<u64>,
+    value: Option<u64>,
 }
 
 impl From<TxOut> for TxOutValue {
     fn from(txout: TxOut) -> Self {
         let asset = serialize(&txout.asset).unwrap();
         let value = match txout.value {
-            Value::Explicit(value) => value,
+            Value::Explicit(value) => Some(value),
             _ => None,
         };
+        let script = txout.script_pubkey;
+        let script_asm = format!("{:?}",script);
+
         TxOutValue {
-            script_pubkey: txout.script_pubkey,
+            scriptpubkey_hex: script,
+            scriptpubkey_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
             assetcommitment: hex::encode(asset),
             value,
         }
