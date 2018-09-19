@@ -24,6 +24,7 @@ use elements::TxOut;
 use elements::OutPoint;
 use bitcoin::network::serialize::deserialize;
 use bitcoin::Script;
+use elements::confidential::Value;
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -130,14 +131,20 @@ impl From<TxIn> for TxInValue {
 struct TxOutValue {
     script_pubkey: Script,
     assetcommitment: String,
+    value: Optional<u64>,
 }
 
 impl From<TxOut> for TxOutValue {
     fn from(txout: TxOut) -> Self {
         let asset = serialize(&txout.asset).unwrap();
+        let value = match txout.value {
+            Value::Explicit(value) => value,
+            _ => None,
+        };
         TxOutValue {
             script_pubkey: txout.script_pubkey,
             assetcommitment: hex::encode(asset),
+            value,
         }
     }
 }
