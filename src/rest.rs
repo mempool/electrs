@@ -33,6 +33,7 @@ struct BlockValue {
     tx_count: u32,
     size: u32,
     weight: u32,
+    confirmations: Option<u32>,
 }
 
 impl From<Block> for BlockValue {
@@ -46,6 +47,7 @@ impl From<Block> for BlockValue {
             size: serialized_block.len() as u32,
             weight: weight as u32,
             id: block.header.bitcoin_hash().be_hex_string(),
+            confirmations: None,
         }
     }
 }
@@ -54,7 +56,7 @@ impl From<Block> for BlockValue {
 struct BlockAndTxsValue {
     block_summary: BlockValue,
     txs: Vec<TransactionValue>,
-    confirmations: Option<u32>,
+
 }
 
 impl From<Block> for BlockAndTxsValue {
@@ -65,7 +67,6 @@ impl From<Block> for BlockAndTxsValue {
         BlockAndTxsValue {
             block_summary: block_value,
             txs: txs,
-            confirmations: None,
         }
     }
 }
@@ -126,6 +127,7 @@ struct TxOutValue {
 impl From<TxOut> for TxOutValue {
     fn from(txout: TxOut) -> Self {
         let asset = serialize(&txout.asset).unwrap();
+        //txout.ct
 
         TxOutValue {
             script_pubkey: txout.script_pubkey,
@@ -203,7 +205,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                             let confirmations = header_entry.height() as u32 - block.header.height + 1;
                             let weights: Vec<u32> = block.txdata.iter().map(|el| el.get_weight() as u32).collect();
                             let mut value = BlockAndTxsValue::from(block);
-                            value.confirmations = Some(confirmations);
+                            value.block_summary.confirmations = Some(confirmations);
 
                             for (tx_value, weight) in value.txs.iter_mut().zip(weights.iter()) {
                                 tx_value.confirmations = Some(confirmations);
