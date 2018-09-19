@@ -202,6 +202,24 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                         None => last_blocks(&query, limit, &block_cache),
                     }
                 },
+                (&Method::GET, Some(&"block-height"), Some(par), None) => {
+                    match par.parse::<usize>() {
+                        Ok(height) => {
+                            let vec = query.get_headers(&[height]);
+                            match vec.get(0) {
+                                None => bad_request(),
+                                Some(val) => {
+                                    let block = query.get_block_with_cache(val.hash(), &block_cache).unwrap();
+                                    json_response(BlockValue::from(block))
+                                }
+                            }
+                        },
+                        Err(_) => {
+                            warn!("can't find block with height {:?}", par);
+                            bad_request()
+                        }
+                    }
+                },
                 (&Method::GET, Some(&"block"), Some(par), None) => {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
@@ -209,7 +227,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                             json_response(BlockValue::from(block))
                         },
                         Err(_) => {
-                            warn!("can't find block with hash {:?}", par);
+                            warn!("can't find block with hash or height {:?}", par);
                             bad_request()
                         }
                     }
