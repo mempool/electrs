@@ -1,7 +1,5 @@
 use config::Config;
-
 use std::sync::Arc;
-
 use hyper::{Body, Response, Server, Method};
 use hyper::service::service_fn_ok;
 use hyper::rt::{self, Future};
@@ -19,7 +17,13 @@ use url::form_urlencoded;
 use serde::Serialize;
 use lru_cache::LruCache;
 use std::sync::Mutex;
-
+use elements::Transaction;
+use hex;
+use elements::TxIn;
+use elements::TxOut;
+use elements::OutPoint;
+use bitcoin::network::serialize::deserialize;
+use bitcoin::Script;
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -29,7 +33,6 @@ struct BlockValue {
     tx_count: u32,
     size: u32,
     weight: u32,
-    //tx_hashes: Option<Vec<Sha256dHash>>,
 }
 
 impl From<Block> for BlockValue {
@@ -48,18 +51,83 @@ impl From<Block> for BlockValue {
 }
 
 #[derive(Serialize, Deserialize)]
-struct BlockAndTxsHashesValue {
+struct BlockAndTxsValue {
     block_summary: BlockValue,
-    txs_hashes: Vec<Sha256dHash>,
+    txs: Vec<TransactionValue>,
+    confirmations: Option<u32>,
 }
 
-impl From<Block> for BlockAndTxsHashesValue {
+impl From<Block> for BlockAndTxsValue {
     fn from(block: Block) -> Self {
-        let txs_hashes = block.txdata.iter().map(|el| el.txid()).collect();
+        let txs = block.txdata.iter().map(|el| TransactionValue::from(el.clone())).collect();
+        let block_value = BlockValue::from(block);
 
-        BlockAndTxsHashesValue {
-            block_summary: BlockValue::from(block),
-            txs_hashes: txs_hashes,
+        BlockAndTxsValue {
+            block_summary: block_value,
+            txs: txs,
+            confirmations: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct TransactionValue {
+    txid: Sha256dHash,
+    input: Vec<TxInValue>,
+    output: Vec<TxOutValue>,
+    confirmations: Option<u32>,
+    hex: Option<String>,
+    block_hash: Option<String>,
+    weight: Option<u32>,
+}
+
+impl From<Transaction> for TransactionValue {
+    fn from(tx: Transaction) -> Self {
+        let input = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
+        let output = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
+
+        TransactionValue {
+            txid: tx.txid(),
+            input,
+            output,
+            confirmations: None,
+            hex: None,
+            block_hash: None,
+            weight: None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct TxInValue {
+    outpoint: OutPoint,
+    script_sig: Script,
+}
+
+
+impl From<TxIn> for TxInValue {
+    fn from(txin: TxIn) -> Self {
+
+        TxInValue {
+            outpoint: txin.previous_output,
+            script_sig: txin.script_sig,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct TxOutValue {
+    script_pubkey: Script,
+    asset: String,
+}
+
+impl From<TxOut> for TxOutValue {
+    fn from(txout: TxOut) -> Self {
+        let asset = serialize(&txout.asset).unwrap();
+
+        TxOutValue {
+            script_pubkey: txout.script_pubkey,
+            asset: hex::encode(asset),
         }
     }
 }
@@ -116,7 +184,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
                             let block = query.get_block_with_cache(&par, &block_cache).unwrap();
-                            json_response(BlockAndTxsHashesValue::from(block))
+                            json_response(BlockValue::from(block))
                         },
                         Err(_) => {
                             warn!("can't find block with hash {:?}", par);
@@ -124,14 +192,40 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                         }
                     }
                 },
-                (&Method::GET, Some(&"block"), Some(str), Some(&"txs")) => {
-                    Response::new(Body::from(format!("block with txs not yet implemented {}", str )))
+                (&Method::GET, Some(&"block"), Some(par), Some(&"txs")) => {
+                    match Sha256dHash::from_hex(par) {
+                        Ok(par) => {
+                            let block = query.get_block_with_cache(&par, &block_cache).unwrap();
+                            let header_entry : HeaderEntry = query.get_best_header().unwrap();
+                            let confirmations = header_entry.height() as u32 - block.header.height + 1;
+                            let mut value = BlockAndTxsValue::from(block);
+                            value.confirmations = Some(confirmations);
+
+                            json_response(value)
+                        },
+                        Err(_) => {
+                            warn!("can't find block with hash {:?}", par);
+                            bad_request()
+                        }
+                    }
                 },
                 (&Method::GET, Some(&"tx"), Some(par), None) => {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
                             match query.get_transaction(&par,true) {
-                                Ok(value) => { ;
+                                Ok(value) => {
+                                    let tx_hex = value.get("hex").unwrap().as_str().unwrap();
+                                    let confirmations = value.get("confirmations").unwrap().as_u64().unwrap();
+                                    let blockhash = value.get("blockhash").unwrap().as_str().unwrap();
+                                    let tx : Transaction = deserialize(&hex::decode(tx_hex).unwrap() ).unwrap();
+                                    let weight = tx.get_weight();
+                                    let mut value = TransactionValue::from(tx);
+                                    value.confirmations = Some(confirmations as u32);
+                                    value.hex = Some(tx_hex.to_string());
+                                    value.block_hash = Some(blockhash.to_string());
+
+                                    value.weight = Some(weight as u32);
+
                                     json_response(value)
                                 },
                                 Err(_) => {
