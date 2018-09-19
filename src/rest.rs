@@ -4,6 +4,7 @@ use hyper::{Body, Response, Server, Method};
 use hyper::service::service_fn_ok;
 use hyper::rt::{self, Future};
 use std::thread;
+use hyper::Error as HyperHttpError;
 use query::Query;
 use hyper::Request;
 use serde_json;
@@ -24,7 +25,13 @@ use elements::TxOut;
 use elements::OutPoint;
 use bitcoin::network::serialize::deserialize;
 use bitcoin::Script;
+use bitcoin::network;
 use elements::confidential::Value;
+use std::num::ParseIntError;
+use bitcoin::util::hash::HexError;
+use std::error::Error;
+use errors;
+use hex::FromHexError;
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -146,6 +153,7 @@ impl From<TxOut> for TxOutValue {
         let script = txout.script_pubkey;
         let script_asm = format!("{:?}",script);
 
+        // TODO should the following something to put inside rust-elements lib?
         let mut script_type = "";
         if script.is_empty() {
             script_type = "empty";
@@ -185,128 +193,16 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
     let new_service = move || {
 
         let query = query.clone();
-        let block_cache = cache.clone();
-
-        //TODO handle errors using service_fn
+        let cache = cache.clone();
+        
         service_fn_ok(move |req: Request<Body>| {
-
-            // TODO it looks hyper does not have routing and query parsing :(
-            let uri = req.uri();
-            let path: Vec<&str> = uri.path().split('/').filter(|el| !el.is_empty()).collect();
-            let query_params = match uri.query() {
-                Some(value) => form_urlencoded::parse(&value.as_bytes()).into_owned().collect::<HashMap<String, String>>(),
-                None => HashMap::new(),
-            };
-
-            info!("path {:?} params {:?}", path, query_params);
-
-            match (req.method(), path.get(0), path.get(1), path.get(2)) {
-                (&Method::GET, Some(&"blocks"), None, None) => {
-                    let limit = query_params.get("limit")
-                        .map_or(10u32,|el| el.parse().unwrap_or(10u32) )
-                        .min(30u32);
-                    match query_params.get("start_height") {
-                        Some(height) => {
-                            match height.parse::<usize>() {
-                                Ok(par) => {
-                                    let vec = query.get_headers(&[par]);
-                                    match vec.get(0) {
-                                        None => bad_request(),
-                                        Some(val) => blocks(&query, &val, limit, &block_cache)
-                                    }
-                                },
-                                Err(_) => {
-                                    bad_request()
-                                }
-                            }
-                        },
-                        None => last_blocks(&query, limit, &block_cache),
-                    }
-                },
-                (&Method::GET, Some(&"block-height"), Some(par), None) => {
-                    match par.parse::<usize>() {
-                        Ok(height) => {
-                            let vec = query.get_headers(&[height]);
-                            match vec.get(0) {
-                                None => bad_request(),
-                                Some(val) => {
-                                    let block = query.get_block_with_cache(val.hash(), &block_cache).unwrap();
-                                    json_response(BlockValue::from(block))
-                                }
-                            }
-                        },
-                        Err(_) => {
-                            warn!("can't find block with height {:?}", par);
-                            bad_request()
-                        }
-                    }
-                },
-                (&Method::GET, Some(&"block"), Some(par), None) => {
-                    match Sha256dHash::from_hex(par) {
-                        Ok(par) => {
-                            let block = query.get_block_with_cache(&par, &block_cache).unwrap();
-                            json_response(BlockValue::from(block))
-                        },
-                        Err(_) => {
-                            warn!("can't find block with hash or height {:?}", par);
-                            bad_request()
-                        }
-                    }
-                },
-                (&Method::GET, Some(&"block"), Some(par), Some(&"with-txs")) => {
-                    match Sha256dHash::from_hex(par) {
-                        Ok(par) => {
-                            let block = query.get_block_with_cache(&par, &block_cache).unwrap();
-                            let block_hash = block.header.bitcoin_hash().be_hex_string();
-                            let header_entry : HeaderEntry = query.get_best_header().unwrap();
-                            let confirmations = header_entry.height() as u32 - block.header.height + 1;
-                            let mut value = BlockAndTxsValue::from(block);
-                            value.block_summary.confirmations = Some(confirmations);
-
-                            for tx_value in value.txs.iter_mut() {
-                                tx_value.confirmations = Some(confirmations);
-                                tx_value.block_hash = Some(block_hash.clone());
-
-                            }
-
-                            json_response(value)
-                        },
-                        Err(_) => {
-                            warn!("can't find block with hash {:?}", par);
-                            bad_request()
-                        }
-                    }
-                },
-                (&Method::GET, Some(&"tx"), Some(par), None) => {
-                    match Sha256dHash::from_hex(par) {
-                        Ok(par) => {
-                            match query.get_transaction(&par,true) {
-                                Ok(value) => {
-                                    let tx_hex = value.get("hex").unwrap().as_str().unwrap();
-                                    let confirmations = value.get("confirmations").unwrap().as_u64().unwrap();
-                                    let blockhash = value.get("blockhash").unwrap().as_str().unwrap();
-                                    let tx : Transaction = deserialize(&hex::decode(tx_hex).unwrap() ).unwrap();
-                                    let mut value = TransactionValue::from(tx);
-                                    value.confirmations = Some(confirmations as u32);
-                                    value.hex = Some(tx_hex.to_string());
-                                    value.block_hash = Some(blockhash.to_string());
-                                    json_response(value)
-                                },
-                                Err(_) => {
-                                    warn!("can't find tx with hash {:?}", par);
-                                    bad_request()
-                                }
-                            }
-                        },
-                        Err(_) => bad_request()
-                    }
-
-                },
-                _ => {
+            match handle_request(req,&query,&cache) {
+                Ok(response) => response,
+                Err(e) => {
+                    warn!("{:?}",e);
                     bad_request()
-                }
+                },
             }
-
         })
     };
 
@@ -314,34 +210,114 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
         .serve(new_service)
         .map_err(|e| eprintln!("server error: {}", e));
 
-
     thread::spawn(move || {
         rt::run(server);
     });
 }
 
+fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruCache<Sha256dHash, Block>>>) -> Result<Response<Body>, StringError> {
+    // TODO it looks hyper does not have routing and query parsing :(
+    let uri = req.uri();
+    let path: Vec<&str> = uri.path().split('/').skip(1).collect();
+    let query_params = match uri.query() {
+        Some(value) => form_urlencoded::parse(&value.as_bytes()).into_owned().collect::<HashMap<String, String>>(),
+        None => HashMap::new(),
+    };
+
+    info!("path {:?} params {:?}", path, query_params);
+
+    match (req.method(), path.get(0), path.get(1), path.get(2)) {
+        (&Method::GET, Some(&"blocks"), None, None) => {
+            let limit = query_params.get("limit")
+                .map_or(10u32,|el| el.parse().unwrap_or(10u32) )
+                .min(30u32);
+            match query_params.get("start_height") {
+                Some(height) => {
+                    let height = height.parse::<usize>()?;
+                    let headers = query.get_headers(&[height]);
+                    match headers.get(0) {
+                        None => Err(StringError(format!("can't find header at height {}", height))),
+                        Some(val) => blocks(&query, &val, limit, &cache)
+                    }
+                },
+                None => last_blocks(&query, limit, &cache),
+            }
+        },
+        (&Method::GET, Some(&"block-height"), Some(height), None) => {
+            let height = height.parse::<usize>()?;
+            let vec = query.get_headers(&[height]);
+            match vec.get(0) {
+                None => return Err(StringError(format!("can't find header at height {}", height))),
+                Some(val) => {
+                    let block = query.get_block_with_cache(val.hash(), &cache)?;
+                    json_response(BlockValue::from(block))
+                }
+            }
+        },
+        (&Method::GET, Some(&"block"), Some(hash), None) => {
+            let hash = Sha256dHash::from_hex(hash)?;
+            let block = query.get_block_with_cache(&hash, &cache)?;
+            json_response(BlockValue::from(block))
+        },
+        (&Method::GET, Some(&"block"), Some(hash), Some(&"with-txs")) => {
+            let hash = Sha256dHash::from_hex(hash)?;
+            let block = query.get_block_with_cache(&hash, &cache)?;
+            let block_hash = block.header.bitcoin_hash().be_hex_string();
+            let header_entry : HeaderEntry = query.get_best_header()?;
+            let confirmations = header_entry.height() as u32 - block.header.height + 1;
+            let mut value = BlockAndTxsValue::from(block);
+            value.block_summary.confirmations = Some(confirmations);
+            for tx_value in value.txs.iter_mut() {
+                tx_value.confirmations = Some(confirmations);
+                tx_value.block_hash = Some(block_hash.clone());
+            }
+            json_response(value)
+        },
+        (&Method::GET, Some(&"tx"), Some(hash), None) => {
+            let hash = Sha256dHash::from_hex(hash)?;
+            let tx_value = query.get_transaction(&hash,true)?;
+            // TODO should handle absence of value in the next three lines, NoneError still unstable
+            let tx_hex = tx_value.get("hex").unwrap().as_str().unwrap();
+            let confirmations = tx_value.get("confirmations").unwrap().as_u64().unwrap();
+            let blockhash = tx_value.get("blockhash").unwrap().as_str().unwrap();
+            let tx : Transaction = deserialize(&hex::decode(tx_hex)? )?;
+            let mut value = TransactionValue::from(tx);
+            value.confirmations = Some(confirmations as u32);
+            value.hex = Some(tx_hex.to_string());
+            value.block_hash = Some(blockhash.to_string());
+            json_response(value)
+        },
+        _ => {
+            Err(StringError(format!("endpoint does not exist {:?}",uri.path())))
+        }
+    }
+}
+
+
 fn bad_request() -> Response<Body> {
+    // TODO should handle hyper unwrap but it's Error type is private, not sure
     Response::builder().status(400).body(Body::from("")).unwrap()
 }
 
-fn json_response<T: Serialize>(value : T) -> Response<Body> {
-    let value = serde_json::to_string(&value).unwrap();
-    Response::builder()
+fn json_response<T: Serialize>(value : T) -> Result<Response<Body>,StringError> {
+    let value = serde_json::to_string(&value)?;
+    Ok(Response::builder()
         .header("Content-type","application/json")
         .header("Access-Control-Allow-Origin", "*")
-        .body(Body::from(value)).unwrap()
+        .body(Body::from(value)).unwrap())
 }
 
-fn last_blocks(query: &Arc<Query>, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>) -> Response<Body> {
-    let header_entry : HeaderEntry = query.get_best_header().unwrap();
+fn last_blocks(query: &Arc<Query>, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>) -> Result<Response<Body>,StringError> {
+    let header_entry : HeaderEntry = query.get_best_header()?;
     blocks(query,&header_entry,limit, block_cache)
 }
 
-fn blocks(query: &Arc<Query>, header_entry: &HeaderEntry, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>) -> Response<Body> {
+fn blocks(query: &Arc<Query>, header_entry: &HeaderEntry, limit: u32, block_cache : &Mutex<LruCache<Sha256dHash,Block>>)
+    -> Result<Response<Body>,StringError> {
     let mut values = Vec::new();
     let mut current_hash = header_entry.hash().clone();
     for _ in 0..limit {
-        let block : Block = query.get_block_with_cache(&current_hash, block_cache).unwrap();
+        let block : Block = query.get_block_with_cache(&current_hash, block_cache)?;
         current_hash = block.header.prev_blockhash.clone();
         match block.header.height {
             0 => break,
@@ -349,6 +325,46 @@ fn blocks(query: &Arc<Query>, header_entry: &HeaderEntry, limit: u32, block_cach
         }
     }
     json_response(values)
+}
+
+#[derive(Debug)]
+struct StringError(String);
+
+// TODO boilerplate conversion, use macros or other better error handling
+impl From<ParseIntError> for StringError {
+    fn from(e: ParseIntError) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<HexError> for StringError {
+    fn from(e: HexError) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<FromHexError> for StringError {
+    fn from(e: FromHexError) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<errors::Error> for StringError {
+    fn from(e: errors::Error) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<serde_json::Error> for StringError {
+    fn from(e: serde_json::Error) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<HyperHttpError> for StringError {
+    fn from(e: HyperHttpError) -> Self {
+        StringError(e.description().to_string())
+    }
+}
+impl From<network::serialize::Error> for StringError {
+    fn from(e: network::serialize::Error) -> Self {
+        StringError(e.description().to_string())
+    }
 }
 
 #[cfg(test)]
@@ -374,3 +390,5 @@ mod tests {
         println!("{:?}",val);
     }
 }
+
+
