@@ -196,10 +196,18 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
                     match Sha256dHash::from_hex(par) {
                         Ok(par) => {
                             let block = query.get_block_with_cache(&par, &block_cache).unwrap();
+                            let block_hash = block.header.bitcoin_hash().be_hex_string();
                             let header_entry : HeaderEntry = query.get_best_header().unwrap();
                             let confirmations = header_entry.height() as u32 - block.header.height + 1;
+                            let weights: Vec<u32> = block.txdata.iter().map(|el| el.get_weight() as u32).collect();
                             let mut value = BlockAndTxsValue::from(block);
                             value.confirmations = Some(confirmations);
+
+                            for (tx_value, weight) in value.txs.iter_mut().zip(weights.iter()) {
+                                tx_value.confirmations = Some(confirmations);
+                                tx_value.block_hash = Some(block_hash.clone());
+                                tx_value.weight = Some(*weight)
+                            }
 
                             json_response(value)
                         },
