@@ -1,37 +1,25 @@
+use bitcoin::util::hash::{Sha256dHash,HexError};
+use bitcoin::network::serialize::{serialize,deserialize};
+use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
-use std::sync::Arc;
-use hyper::{Body, Response, Server, Method};
+use elements::{Block,TxIn,TxOut,OutPoint,Transaction};
+use elements::confidential::Value;
+use errors;
+use hex::{self, FromHexError};
+use hyper::{Body, Response, Server, Method,Request};
 use hyper::service::service_fn_ok;
 use hyper::rt::{self, Future};
-use std::thread;
-use hyper::Error as HyperHttpError;
-use query::Query;
-use hyper::Request;
-use serde_json;
-use util::HeaderEntry;
-use elements::Block;
-use bitcoin::network::serialize::serialize;
-use bitcoin::BitcoinHash;
-use bitcoin::util::hash::Sha256dHash;
-use std::collections::HashMap;
-use url::form_urlencoded;
-use serde::Serialize;
 use lru_cache::LruCache;
-use std::sync::Mutex;
-use elements::Transaction;
-use hex;
-use elements::TxIn;
-use elements::TxOut;
-use elements::OutPoint;
-use bitcoin::network::serialize::deserialize;
-use bitcoin::Script;
-use bitcoin::network;
-use elements::confidential::Value;
-use std::num::ParseIntError;
-use bitcoin::util::hash::HexError;
+use query::Query;
+use serde_json;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::error::Error;
-use errors;
-use hex::FromHexError;
+use std::num::ParseIntError;
+use std::thread;
+use std::sync::{Arc,Mutex};
+use url::form_urlencoded;
+use util::HeaderEntry;
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -118,7 +106,6 @@ struct TxInValue {
     is_coinbase: bool,
 }
 
-
 impl From<TxIn> for TxInValue {
     fn from(txin: TxIn) -> Self {
         let is_coinbase = txin.is_coinbase();
@@ -184,7 +171,6 @@ impl From<TxOut> for TxOutValue {
 }
 
 pub fn run_server(_config: &Config, query: Arc<Query>) {
-
     let addr = ([127, 0, 0, 1], 3000).into();  // TODO take from config
     info!("REST server running on {}", addr);
 
@@ -223,9 +209,7 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
         Some(value) => form_urlencoded::parse(&value.as_bytes()).into_owned().collect::<HashMap<String, String>>(),
         None => HashMap::new(),
     };
-
     info!("path {:?} params {:?}", path, query_params);
-
     match (req.method(), path.get(0), path.get(1), path.get(2)) {
         (&Method::GET, Some(&"blocks"), None, None) => {
             let limit = query_params.get("limit")
@@ -293,7 +277,6 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
     }
 }
 
-
 fn bad_request() -> Response<Body> {
     // TODO should handle hyper unwrap but it's Error type is private, not sure
     Response::builder().status(400).body(Body::from("")).unwrap()
@@ -353,11 +336,6 @@ impl From<errors::Error> for StringError {
 }
 impl From<serde_json::Error> for StringError {
     fn from(e: serde_json::Error) -> Self {
-        StringError(e.description().to_string())
-    }
-}
-impl From<HyperHttpError> for StringError {
-    fn from(e: HyperHttpError) -> Self {
         StringError(e.description().to_string())
     }
 }
