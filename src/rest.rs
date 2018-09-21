@@ -260,10 +260,15 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
         (&Method::GET, Some(&"tx"), Some(hash), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let tx_value = query.get_transaction(&hash,true)?;
-            // TODO should handle absence of value in the next three lines, NoneError still unstable
-            let tx_hex = tx_value.get("hex").unwrap().as_str().unwrap();
-            let confirmations = tx_value.get("confirmations").unwrap().as_u64().unwrap();
-            let blockhash = tx_value.get("blockhash").unwrap().as_str().unwrap();
+            let tx_hex = tx_value
+                .get("hex").ok_or(StringError("hex not in tx json".to_string()))?
+                .as_str().ok_or(StringError("hex not a string".to_string()))?;
+            let confirmations = tx_value
+                .get("confirmations").ok_or(StringError("confirmations not in tx json".to_string()))?
+                .as_u64().ok_or(StringError("confirmations not a u64".to_string()))?;
+            let blockhash = tx_value
+                .get("blockhash").ok_or(StringError("blockhash not in tx json".to_string()))?
+                .as_str().ok_or(StringError("blockhash not a string".to_string()))?;
             let tx : Transaction = deserialize(&hex::decode(tx_hex)? )?;
             let mut value = TransactionValue::from(tx);
             value.confirmations = Some(confirmations as u32);
