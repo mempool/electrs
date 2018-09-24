@@ -30,6 +30,7 @@ struct BlockValue {
     size: u32,
     weight: u32,
     confirmations: Option<u32>,
+    previousblockhash: String,
 }
 
 impl From<Block> for BlockValue {
@@ -44,6 +45,7 @@ impl From<Block> for BlockValue {
             weight: weight as u32,
             id: block.header.bitcoin_hash().be_hex_string(),
             confirmations: None,
+            previousblockhash: block.header.prev_blockhash.be_hex_string(),
         }
     }
 }
@@ -127,7 +129,7 @@ struct TxOutValue {
     scriptpubkey_asm: String,
     assetcommitment: String,
     value: Option<u64>,
-    script_type: String,
+    scriptpubkey_type: String,
 }
 
 impl From<TxOut> for TxOutValue {
@@ -165,7 +167,7 @@ impl From<TxOut> for TxOutValue {
             scriptpubkey_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
             assetcommitment: hex::encode(asset),
             value,
-            script_type: script_type.to_string(),
+            scriptpubkey_type: script_type.to_string(),
         }
     }
 }
@@ -180,7 +182,7 @@ pub fn run_server(_config: &Config, query: Arc<Query>) {
 
         let query = query.clone();
         let cache = cache.clone();
-        
+
         service_fn_ok(move |req: Request<Body>| {
             match handle_request(req,&query,&cache) {
                 Ok(response) => response,
@@ -235,6 +237,25 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
                 Some(val) => {
                     let block = query.get_block_with_cache(val.hash(), &cache)?;
                     json_response(BlockValue::from(block))
+                }
+            }
+        },
+        (&Method::GET, Some(&"block-height"), Some(height), Some(&"with-txs")) => {
+            let height = height.parse::<usize>()?;
+            let vec = query.get_headers(&[height]);
+            match vec.get(0) {
+                None => return Err(StringError(format!("can't find header at height {}", height))),
+                Some(val) => {
+                    let block = query.get_block_with_cache(val.hash(), &cache)?;
+                    let header_entry : HeaderEntry = query.get_best_header()?;
+                    let confirmations = header_entry.height() as u32 - block.header.height + 1;
+                    let mut value = BlockAndTxsValue::from(block);
+                    value.block_summary.confirmations = Some(confirmations);
+                    for tx_value in value.txs.iter_mut() {
+                        tx_value.confirmations = value.block_summary.confirmations;
+                        tx_value.block_hash = Some(value.block_summary.id.clone());
+                    }
+                    json_response(value)
                 }
             }
         },
