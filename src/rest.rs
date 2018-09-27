@@ -3,7 +3,7 @@ use bitcoin::network::serialize::{serialize,deserialize};
 use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
 use elements::{Block,TxIn,TxOut,OutPoint,Transaction};
-use elements::confidential::Value;
+use elements::confidential::{Value,Asset};
 use errors;
 use hex::{self, FromHexError};
 use hyper::{Body, Response, Server, Method,Request};
@@ -127,14 +127,22 @@ impl From<TxIn> for TxInValue {
 struct TxOutValue {
     scriptpubkey_hex: Script,
     scriptpubkey_asm: String,
-    assetcommitment: String,
+    asset: Option<String>,
+    assetcommitment: Option<String>,
     value: Option<u64>,
     scriptpubkey_type: String,
 }
 
 impl From<TxOut> for TxOutValue {
     fn from(txout: TxOut) -> Self {
-        let asset = serialize(&txout.asset).unwrap();
+        let asset = match txout.asset {
+            Asset::Explicit(value) => Some(value.be_hex_string()),
+            _ => None
+        };
+        let assetcommitment = match txout.asset {
+            Asset::Confidential(..) => Some(hex::encode(serialize(&txout.asset).unwrap())),
+            _ => None
+        };
         let value = match txout.value {
             Value::Explicit(value) => Some(value),
             _ => None,
@@ -165,7 +173,8 @@ impl From<TxOut> for TxOutValue {
         TxOutValue {
             scriptpubkey_hex: script,
             scriptpubkey_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
-            assetcommitment: hex::encode(asset),
+            asset,
+            assetcommitment,
             value,
             scriptpubkey_type: script_type.to_string(),
         }
