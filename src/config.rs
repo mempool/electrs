@@ -117,6 +117,7 @@ impl Config {
             "testnet" => Network::Testnet,
             "regtest" => Network::Regtest,
             "liquid" => Network::Liquid,
+            "liquidv1" => Network::LiquidV1,
             "liquidregtest" => Network::LiquidRegtest,
             _ => panic!("unsupported Bitcoin network: {:?}", network_name),
         };
@@ -128,6 +129,7 @@ impl Config {
             Network::Testnet => 18332,
             Network::Regtest => 18443,
             Network::Liquid => 10099,
+            Network::LiquidV1 => 10199,
             Network::LiquidRegtest => 7041,
         };
         let default_electrum_port = match network_type {
@@ -135,6 +137,7 @@ impl Config {
             Network::Testnet => 60001,
             Network::Regtest => 60401,
             Network::Liquid => 51000,
+            Network::LiquidV1 => 51200,
             Network::LiquidRegtest => 51401,
         };
         let default_monitoring_port = match network_type {
@@ -142,6 +145,7 @@ impl Config {
             Network::Testnet => 14224,
             Network::Regtest => 24224,
             Network::Liquid => 34224,
+            Network::LiquidV1 => 31240,
             Network::LiquidRegtest => 44224,
         };
 
@@ -174,6 +178,7 @@ impl Config {
             Network::Testnet => daemon_dir.push("testnet3"),
             Network::Regtest => daemon_dir.push("regtest"),
             Network::Liquid => daemon_dir.push("liquid"),
+            Network::LiquidV1 => daemon_dir.push("liquidv1"),
             Network::LiquidRegtest => daemon_dir.push("liquidregtest"),
         }
         let cookie = m.value_of("cookie").map(|s| s.to_owned());
