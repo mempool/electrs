@@ -3,6 +3,7 @@
 extern crate base64;
 extern crate bincode;
 extern crate bitcoin;
+extern crate bitcoin_bech32;
 extern crate elements;
 extern crate chan_signal;
 extern crate crypto;
@@ -15,6 +16,7 @@ extern crate num_cpus;
 extern crate page_size;
 extern crate prometheus;
 extern crate rocksdb;
+extern crate secp256k1;
 extern crate serde;
 extern crate stderrlog;
 extern crate sysconf;
