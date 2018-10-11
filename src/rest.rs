@@ -22,6 +22,8 @@ use url::form_urlencoded;
 use daemon::Network;
 use util::{HeaderEntry,script_to_address};
 
+const TX_LIMIT: usize = 50;
+
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
     id: String,
@@ -48,25 +50,6 @@ impl From<Block> for BlockValue {
             confirmations: None,
             previousblockhash: if &block.header.prev_blockhash[..] != &[0u8;32][..] { Some(block.header.prev_blockhash.be_hex_string()) }
                                else { None },
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct BlockAndTxsValue {
-    block_summary: BlockValue,
-    txs: Vec<TransactionValue>,
-
-}
-
-impl From<Block> for BlockAndTxsValue {
-    fn from(block: Block) -> Self {
-        let txs = block.txdata.iter().map(|el| TransactionValue::from(el.clone())).collect();
-        let block_value = BlockValue::from(block);
-
-        BlockAndTxsValue {
-            block_summary: block_value,
-            txs: txs,
         }
     }
 }
@@ -296,22 +279,24 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
             let block = query.get_block_with_cache(&hash, &cache)?;
             json_response(BlockValue::from(block))
         },
-        (&Method::GET, Some(&"block"), Some(hash), Some(&"with-txs")) => {
+        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs")) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let block = query.get_block_with_cache(&hash, &cache)?;
 
             // @TODO optimization: skip deserializing transactions outside of range
-            let start = (query_params.get("start_index")
+            let mut start = query_params.get("start_index")
                 .map_or(0u32, |el| el.parse().unwrap_or(0))
-                .max(0u32) as usize).min(block.txdata.len());
-            let limit = query_params.get("limit")
-                .map_or(10u32,|el| el.parse().unwrap_or(10u32) )
-                .min(50u32) as usize;
-            let end = (start+limit).min(block.txdata.len());
-            let block = Block { header: block.header, txdata: block.txdata[start..end].to_vec() };
-            let mut value = BlockAndTxsValue::from(block);
-            attach_txs_data(&mut value.txs, network, query);
-            json_response(value)
+                .max(0u32) as usize;
+
+            if start >= block.txdata.len() {
+                return Ok(http_message(StatusCode::NOT_FOUND, "start index out of range".to_string()));
+            } else if start % TX_LIMIT != 0 {
+                return Ok(http_message(StatusCode::BAD_REQUEST, format!("start index must be a multipication of {}", TX_LIMIT)));
+            }
+
+            let mut txs = block.txdata.iter().skip(start).take(TX_LIMIT).map(|tx| TransactionValue::from(tx.clone())).collect();
+            attach_txs_data(&mut txs, network, query);
+            json_response(txs)
         },
         (&Method::GET, Some(&"tx"), Some(hash), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
