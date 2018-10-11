@@ -12,8 +12,8 @@ use index::{compute_script_hash, TxInRow, TxOutRow, TxRow, RawTxRow};
 use mempool::Tracker;
 use metrics::Metrics;
 use serde_json::Value;
-use store::{ReadStore,Row};
-use util::{FullHash, HashPrefix, HeaderEntry};
+use store::{ReadStore, Row};
+use util::{FullHash, HashPrefix, HeaderEntry, Bytes};
 
 use errors::*;
 
@@ -332,6 +332,11 @@ impl Query {
                 self.app.daemon().gettransaction(txid)
             }
         }
+    }
+
+    // Get raw transaction from txstore, no bitcoind fallback
+    pub fn txstore_get_raw(&self, txid: &Sha256dHash) -> Option<Bytes> {
+        Some(rawtxrow_by_txid(self.app.read_store(), txid)?.rawtx)
     }
 
     // Public API for transaction retrieval (for Electrum RPC)
