@@ -57,13 +57,16 @@ struct TransactionValue {
     vout: Vec<TxOutValue>,
     size: u32,
     weight: u32,
+    fee: u64,
 }
 
 impl From<Transaction> for TransactionValue {
     fn from(tx: Transaction) -> Self {
         let vin = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
-        let vout = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
+        let vout: Vec<TxOutValue> = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
         let bytes = serialize(&tx).unwrap();
+        let fee = vout.iter().find(|vout| vout.scriptpubkey_type == "fee")
+                             .map_or(0, |vout| vout.value.unwrap());
 
         TransactionValue {
             txid: tx.txid(),
@@ -71,6 +74,7 @@ impl From<Transaction> for TransactionValue {
             vout,
             size: bytes.len() as u32,
             weight: tx.get_weight() as u32,
+            fee,
         }
     }
 }
