@@ -277,7 +277,11 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, cache: &Arc<Mutex<LruC
         (&Method::GET, Some(&"block"), Some(hash), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let block = query.get_block_with_cache(&hash, &cache)?;
-            json_response(BlockValue::from(block))
+
+            let mut value = BlockValue::from(block);
+            value.confirmations = Some(query.get_best_header()?.height() as u32 - value.height + 1);
+
+            json_response(value)
         },
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs")) => {
             let hash = Sha256dHash::from_hex(hash)?;
