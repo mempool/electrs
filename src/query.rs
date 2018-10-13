@@ -7,6 +7,7 @@ use lru::LruCache;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use bincode;
+use hex;
 
 use app::App;
 use index::{compute_script_hash, TxInRow, TxOutRow, TxRow, RawTxRow};
@@ -336,15 +337,24 @@ impl Query {
         match rawtxrow_by_txid(self.app.read_store(), txid) {
             Some(row) => Ok(deserialize(&row.rawtx).chain_err(|| "cannot parse tx")?),
             None => {
-                debug!("missing tx {} in txstore, asking node", txid);
+                debug!("missing tx {} in txstore, asking node for mempool tx", txid);
                 self.app.daemon().gettransaction(txid)
             }
         }
     }
 
-    // Get raw transaction from txstore, no bitcoind fallback
-    pub fn txstore_get_raw(&self, txid: &Sha256dHash) -> Option<Bytes> {
-        Some(rawtxrow_by_txid(self.app.read_store(), txid)?.rawtx)
+    // Get raw transaction from txstore, fallback to reading from bitcoind rpc
+    pub fn txstore_get_raw(&self, txid: &Sha256dHash) -> Result<Bytes> {
+        match rawtxrow_by_txid(self.app.read_store(), txid) {
+            Some(row) => Ok(row.rawtx),
+            None => {
+                debug!("missing tx {} in txstore, asking node for mempool tx", txid);
+                let value = self.app.daemon().gettransaction_raw(txid, false).chain_err(|| "cannot find tx")?;
+                let tx_hex = value.as_str().chain_err(|| "non-string tx")?;
+                let tx_bytes = hex::decode(tx_hex).chain_err(|| "non-hex tx")?;
+                Ok(tx_bytes)
+            }
+        }
     }
 
     // Public API for transaction retrieval (for Electrum RPC)
