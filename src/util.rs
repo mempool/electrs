@@ -66,7 +66,6 @@ impl fmt::Debug for HeaderEntry {
 pub struct HeaderList {
     headers: Vec<HeaderEntry>,
     heights: HashMap<Sha256dHash, usize>,
-    tip: Sha256dHash,
 }
 
 impl HeaderList {
@@ -74,7 +73,6 @@ impl HeaderList {
         HeaderList {
             headers: vec![],
             heights: HashMap::new(),
-            tip: Sha256dHash::default(),
         }
     }
 
@@ -117,7 +115,7 @@ impl HeaderList {
             }).collect()
     }
 
-    pub fn apply(&mut self, new_headers: Vec<HeaderEntry>) {
+    pub fn apply(&mut self, new_headers: Vec<HeaderEntry>, tip: Sha256dHash) {
         // new_headers[i] -> new_headers[i - 1] (i.e. new_headers.last() is the tip)
         for i in 1..new_headers.len() {
             assert_eq!(new_headers[i - 1].height() + 1, new_headers[i].height());
@@ -135,9 +133,14 @@ impl HeaderList {
                     Sha256dHash::default()
                 };
                 assert_eq!(entry.header().prev_blockhash, expected_prev_blockhash);
+                let expected_tip = new_headers.last().unwrap().hash();
+                assert_eq!(tip, *expected_tip);
                 height
             }
-            None => return,
+            None => *self
+                .heights
+                .get(&tip)
+                .expect(&format!("missing tip: {}", tip)),
         };
         debug!(
             "applying {} new headers from height {}",
@@ -146,12 +149,13 @@ impl HeaderList {
         );
         self.headers.split_off(new_height); // keep [0..new_height) entries
         for new_header in new_headers {
-            let height = new_header.height();
-            assert_eq!(height, self.headers.len());
-            self.tip = *new_header.hash();
+            assert_eq!(new_header.height(), self.headers.len());
+            assert_eq!(new_header.header().prev_blockhash, self.tip());
+            self.heights.insert(*new_header.hash(), new_header.height());
             self.headers.push(new_header);
-            self.heights.insert(self.tip, height);
         }
+        assert_eq!(tip, self.tip());
+        assert!(self.heights.contains_key(&tip));
     }
 
     pub fn header_by_blockhash(&self, blockhash: &Sha256dHash) -> Option<&HeaderEntry> {
@@ -175,15 +179,11 @@ impl HeaderList {
         self.headers.last() == other.headers.last()
     }
 
-    pub fn tip(&self) -> &Sha256dHash {
-        assert_eq!(
-            self.tip,
-            self.headers
-                .last()
-                .map(|h| *h.hash())
-                .unwrap_or(Sha256dHash::default())
-        );
-        &self.tip
+    pub fn tip(&self) -> Sha256dHash {
+        self.headers
+            .last()
+            .map(|h| *h.hash())
+            .unwrap_or(Sha256dHash::default())
     }
 
     pub fn len(&self) -> usize {
