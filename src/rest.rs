@@ -2,7 +2,7 @@ use bitcoin::util::hash::{Sha256dHash,HexError};
 use bitcoin::network::serialize::serialize;
 use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
-use elements::{TxIn,TxOut,OutPoint,Transaction};
+use elements::{TxIn,TxOut,OutPoint,Transaction,Proof};
 use elements::confidential::{Value,Asset};
 use errors;
 use hex::{self, FromHexError};
@@ -32,6 +32,7 @@ struct BlockValue {
     size: u32,
     weight: u32,
     previousblockhash: Option<String>,
+    proof: BlockProofValue
 }
 
 impl From<BlockHeaderMeta> for BlockValue {
@@ -40,12 +41,31 @@ impl From<BlockHeaderMeta> for BlockValue {
         BlockValue {
             id: header.bitcoin_hash().be_hex_string(),
             height: blockhm.header_entry.height() as u32,
+            proof: BlockProofValue::from(header.proof.clone()),
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
             weight: blockhm.meta.weight,
             previousblockhash: if &header.prev_blockhash != &Sha256dHash::default() { Some(header.prev_blockhash.be_hex_string()) }
                                else { None },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct BlockProofValue {
+    challenge: Script,
+    challenge_asm: String,
+    solution: Script,
+    solution_asm: String,
+}
+impl From<Proof> for BlockProofValue {
+    fn from(proof: Proof) -> Self {
+        BlockProofValue {
+            challenge_asm: get_script_asm(&proof.challenge),
+            challenge: proof.challenge,
+            solution_asm: get_script_asm(&proof.solution),
+            solution: proof.solution,
         }
     }
 }
@@ -96,12 +116,11 @@ impl From<TxIn> for TxInValue {
     fn from(txin: TxIn) -> Self {
         let is_coinbase = txin.is_coinbase();
         let script = txin.script_sig;
-        let script_asm = format!("{:?}",script);
 
         TxInValue {
             outpoint: txin.previous_output,
             prevout: None, // added later
-            scriptsig_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
+            scriptsig_asm: get_script_asm(&script),
             scriptsig_hex: script,
             is_coinbase,
         }
@@ -170,6 +189,10 @@ impl From<TxOut> for TxOutValue {
     }
 }
 
+fn get_script_asm(script: &Script) -> String {
+    let asm = format!("{:?}", script);
+    (&asm[7..asm.len()-1]).to_string()
+}
 
 fn attach_tx_data(tx: TransactionValue, network: &Network, query: &Arc<Query>) -> TransactionValue {
     let mut txs = vec![tx];
