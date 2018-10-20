@@ -4,21 +4,24 @@ use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
 use elements::{TxIn,TxOut,OutPoint,Transaction,Proof};
 use elements::confidential::{Value,Asset};
+use bitcoin::util::address::Address;
 use errors;
 use hex::{self, FromHexError};
 use hyper::{Body, Response, Server, Method, Request, StatusCode};
 use hyper::service::service_fn_ok;
 use hyper::rt::{self, Future};
-use query::Query;
+use query::{Query, TxnHeight};
 use serde_json;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::num::ParseIntError;
+use std::str::FromStr;
 use std::thread;
 use std::sync::Arc;
 use daemon::Network;
-use util::{BlockHeaderMeta, script_to_address};
+use util::{FullHash, BlockHeaderMeta, TransactionStatus, script_to_address};
+use index::compute_script_hash;
 
 const TX_LIMIT: usize = 50;
 const BLOCK_LIMIT: usize = 10;
@@ -80,6 +83,7 @@ struct TransactionValue {
     size: u32,
     weight: u32,
     fee: u64,
+    status: Option<TransactionStatus>,
 }
 
 impl From<Transaction> for TransactionValue {
@@ -99,11 +103,26 @@ impl From<Transaction> for TransactionValue {
             size: bytes.len() as u32,
             weight: tx.get_weight() as u32,
             fee,
+            status: None,
         }
     }
 }
 
-#[derive(Serialize, Deserialize)]
+impl From<TxnHeight> for TransactionValue {
+    fn from(t: TxnHeight) -> Self {
+        let TxnHeight { txn, height, blockhash } = t;
+        let mut value = TransactionValue::from(txn);
+        value.status = Some(if height != 0 {
+          TransactionStatus { confirmed: true, block_height: Some(height), block_hash: Some(blockhash) }
+        } else {
+          TransactionStatus::unconfirmed()
+        });
+        value
+    }
+}
+
+
+#[derive(Serialize, Deserialize, Clone)]
 struct TxInValue {
     outpoint: OutPoint,
     prevout: Option<TxOutValue>,
@@ -316,6 +335,34 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, network: &Network) -> 
             attach_txs_data(&mut txs, network, query);
             json_response(txs)
         },
+        (&Method::GET, Some(&"address"), Some(address), None, None) => {
+            let script_hash = address_to_scripthash(address)?;
+            let status = query.status(&script_hash[..])?;
+            // @TODO create new AddressStatsValue struct?
+            json_response(json!({ "address": address, "tx_count": status.history().len(), }))
+        },
+        (&Method::GET, Some(&"address"), Some(address), Some(&"txs"), start_index) => {
+            let start_index = start_index
+                .map_or(0u32, |el| el.parse().unwrap_or(0))
+                .max(0u32) as usize;
+
+            let script_hash = address_to_scripthash(address)?;
+            let status = query.status(&script_hash[..])?;
+            let txs = status.history_txs();
+
+            if txs.len() == 0 {
+                return json_response(json!([]));
+            } else if start_index >= txs.len() {
+                return Ok(http_message(StatusCode::NOT_FOUND, "start index out of range".to_string()));
+            } else if start_index % TX_LIMIT != 0 {
+                return Ok(http_message(StatusCode::BAD_REQUEST, format!("start index must be a multipication of {}", TX_LIMIT)));
+            }
+
+            let mut txs = txs.iter().skip(start_index).take(TX_LIMIT).map(|t| TransactionValue::from((*t).clone())).collect();
+            attach_txs_data(&mut txs, network, query);
+
+            json_response(txs)
+        },
         (&Method::GET, Some(&"tx"), Some(hash), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let transaction = query.tx_get(&hash).ok_or(StringError("cannot find tx".to_string()))?;
@@ -383,6 +430,11 @@ fn blocks(query: &Arc<Query>, start_height: Option<usize>)
         }
     }
     json_response(values)
+}
+
+fn address_to_scripthash(addr: &str) -> Result<FullHash, StringError> {
+    let addr = Address::from_str(addr)?;
+    Ok(compute_script_hash(&addr.script_pubkey().into_bytes()))
 }
 
 #[derive(Debug)]
