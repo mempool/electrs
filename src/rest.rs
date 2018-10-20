@@ -32,7 +32,7 @@ struct BlockValue {
     size: u32,
     weight: u32,
     previousblockhash: Option<String>,
-    proof: BlockProofValue
+    proof: Option<BlockProofValue>
 }
 
 impl From<BlockHeaderMeta> for BlockValue {
@@ -41,7 +41,7 @@ impl From<BlockHeaderMeta> for BlockValue {
         BlockValue {
             id: header.bitcoin_hash().be_hex_string(),
             height: blockhm.header_entry.height() as u32,
-            proof: BlockProofValue::from(header.proof.clone()),
+            proof: Some(BlockProofValue::from(header.proof.clone())),
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
@@ -374,7 +374,9 @@ fn blocks(query: &Arc<Query>, start_height: Option<usize>)
     for _ in 0..BLOCK_LIMIT {
         let blockhm = query.get_block_header_with_meta(&current_hash)?;
         current_hash = blockhm.header_entry.header().prev_blockhash.clone();
-        values.push(BlockValue::from(blockhm));
+        let mut value = BlockValue::from(blockhm);
+        value.proof = None;
+        values.push(value);
 
         if &current_hash[..] == &zero[..] {
             break;
