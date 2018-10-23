@@ -10,7 +10,7 @@ use hex::{self, FromHexError};
 use hyper::{Body, Response, Server, Method, Request, StatusCode};
 use hyper::service::service_fn_ok;
 use hyper::rt::{self, Future};
-use query::{Query, TxnHeight};
+use query::{Query, TxnHeight, FundingOutput};
 use serde_json;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -208,6 +208,31 @@ impl From<TxOut> for TxOutValue {
     }
 }
 
+#[derive(Serialize)]
+struct UtxoValue {
+    txid: Sha256dHash,
+    vout: u32,
+    value: u64,
+    status: TransactionStatus,
+}
+impl From<FundingOutput> for UtxoValue {
+    fn from(out: FundingOutput) -> Self {
+        let FundingOutput { txn: t, txn_id, output_index, value, .. } = out;
+        let TxnHeight { height, blockhash, .. } = t;
+
+        UtxoValue {
+            txid: txn_id,
+            vout: output_index as u32,
+            value: value,
+            status: if height != 0 {
+              TransactionStatus { confirmed: true, block_height: Some(height), block_hash: Some(blockhash) }
+            } else {
+              TransactionStatus::unconfirmed()
+            }
+        }
+    }
+}
+
 fn get_script_asm(script: &Script) -> String {
     let asm = format!("{:?}", script);
     (&asm[7..asm.len()-1]).to_string()
@@ -362,6 +387,13 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, network: &Network) -> 
             attach_txs_data(&mut txs, network, query);
 
             json_response(txs)
+        },
+        (&Method::GET, Some(&"address"), Some(address), Some(&"utxo"), None) => {
+            let script_hash = address_to_scripthash(address, &network)?;
+            let status = query.status(&script_hash[..])?;
+            let utxos: Vec<UtxoValue> = status.unspent().into_iter().map(|o| UtxoValue::from(o.clone())).collect();
+            // @XXX no paging, but query.status() is limited to 30 funding txs
+            json_response(utxos)
         },
         (&Method::GET, Some(&"tx"), Some(hash), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
