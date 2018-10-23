@@ -366,3 +366,11 @@ fn to_bech_network (network: &Network) -> B32Network {
     }
 }
 
+// @FIXME
+pub fn from_bitcoin_network (network: &BNetwork) -> Network {
+    match network {
+        BNetwork::Bitcoin => Network::Liquid,
+        BNetwork::Regtest => Network::LiquidRegtest,
+        BNetwork::Testnet => Network::Testnet,
+    }
+}
