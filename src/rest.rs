@@ -129,6 +129,7 @@ struct TxInValue {
     scriptsig_hex: Script,
     scriptsig_asm: String,
     is_coinbase: bool,
+    sequence: u32,
 }
 
 impl From<TxIn> for TxInValue {
@@ -142,6 +143,7 @@ impl From<TxIn> for TxInValue {
             scriptsig_asm: get_script_asm(&script),
             scriptsig_hex: script,
             is_coinbase,
+            sequence: txin.sequence,
         }
     }
 }
