@@ -387,6 +387,18 @@ impl Query {
         })
     }
 
+    pub fn find_spending_for_funding_tx(&self, tx: Transaction) -> Result<Vec<Option<SpendingInput>>> {
+        let txid = tx.txid();
+        let mut spends = vec![];
+        for (output_index, output) in tx.output.iter().enumerate() {
+             let spend = if !output.is_fee() && !output.script_pubkey.is_provably_unspendable() {
+                 self.find_spending_by_outpoint((txid, output_index))?
+             } else { None };
+             spends.push(spend)
+         }
+        Ok(spends)
+    }
+
     // Internal API for transaction retrieval (uses bitcoind)
     fn _load_txn(&self, tx_hash: &Sha256dHash) -> Result<Transaction> {
         self.app.daemon().gettransaction(tx_hash)
