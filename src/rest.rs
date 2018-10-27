@@ -20,7 +20,7 @@ use std::str::FromStr;
 use std::thread;
 use std::sync::Arc;
 use daemon::Network;
-use util::{FullHash, BlockHeaderMeta, TransactionStatus, script_to_address, from_bitcoin_network};
+use util::{FullHash, BlockHeaderMeta, TransactionStatus, PegOutRequest, script_to_address, from_bitcoin_network, get_script_asm};
 use index::compute_script_hash;
 
 const TX_LIMIT: usize = 50;
@@ -157,6 +157,7 @@ struct TxOutValue {
     assetcommitment: Option<String>,
     value: Option<u64>,
     scriptpubkey_type: String,
+    pegout: Option<PegOutRequest>,
 }
 
 impl From<TxOut> for TxOutValue {
@@ -175,7 +176,7 @@ impl From<TxOut> for TxOutValue {
         };
         let is_fee = txout.is_fee();
         let script = txout.script_pubkey;
-        let script_asm = format!("{:?}",script);
+        let script_asm = get_script_asm(&script);
 
         // TODO should the following something to put inside rust-elements lib?
         let script_type = if is_fee {
@@ -200,12 +201,13 @@ impl From<TxOut> for TxOutValue {
 
         TxOutValue {
             scriptpubkey_hex: script,
-            scriptpubkey_asm: (&script_asm[7..script_asm.len()-1]).to_string(),
+            scriptpubkey_asm: script_asm,
             scriptpubkey_address: None, // added later
             asset,
             assetcommitment,
             value,
             scriptpubkey_type: script_type.to_string(),
+            pegout: None, // added later
         }
     }
 }
@@ -233,11 +235,6 @@ impl From<FundingOutput> for UtxoValue {
             }
         }
     }
-}
-
-fn get_script_asm(script: &Script) -> String {
-    let asm = format!("{:?}", script);
-    (&asm[7..asm.len()-1]).to_string()
 }
 
 #[derive(Serialize)]
@@ -294,10 +291,11 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, network: &Network, query: &A
                 lookups.entry(vin.outpoint.txid).or_insert(vec![]).push((vin.outpoint.vout, vin));
             }
         }
-        // attach encoded address (should ideally happen in TxOutValue::from(), but it cannot
-        // easily access the network)
+        // attach encoded address and pegout info (should ideally happen in TxOutValue::from(),
+        // but it cannot easily access the network)
         for mut vout in tx.vout.iter_mut() {
             vout.scriptpubkey_address = script_to_address(&vout.scriptpubkey_hex, &network);
+            vout.pegout = PegOutRequest::parse(&vout.scriptpubkey_hex, &network);
         }
     }
 
