@@ -159,12 +159,13 @@ fn parse_jsonrpc_reply(mut reply: Value, method: &str, expected_id: u64) -> Resu
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct BlockchainInfo {
-    chain: String,
-    blocks: u32,
-    headers: u32,
-    bestblockhash: String,
-    pruned: bool,
+pub struct BlockchainInfo {
+    pub chain: String,
+    pub blocks: u32,
+    pub headers: u32,
+    pub bestblockhash: String,
+    pub pruned: bool,
+    pub verificationprogress: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -497,7 +498,7 @@ impl Daemon {
 
     // bitcoind JSONRPC API:
 
-    fn getblockchaininfo(&self) -> Result<BlockchainInfo> {
+    pub fn getblockchaininfo(&self) -> Result<BlockchainInfo> {
         let info: Value = self.request("getblockchaininfo", json!([]))?;
         Ok(from_value(info).chain_err(|| "invalid blockchain info")?)
     }
