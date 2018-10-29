@@ -63,7 +63,7 @@ fn run_server(config: &Config) -> Result<()> {
         query.update_mempool()?;
 
         if server.is_none() {
-            if app.daemon().getblockchaininfo()?.verificationprogress == 1.0 {
+            if app.daemon().getblockchaininfo()?.verificationprogress > 0.9999 {
                 server = Some(rest::run_server(&config, query.clone()));
             } else {
                 warn!("bitcoind not fully synced waiting");
