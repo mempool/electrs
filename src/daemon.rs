@@ -21,7 +21,7 @@ use util::HeaderList;
 
 use errors::*;
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Hash)]
 pub enum Network {
     Bitcoin,
     Testnet,

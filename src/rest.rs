@@ -4,7 +4,7 @@ use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
 use elements::{TxIn,TxOut,OutPoint,Transaction,Proof};
 use elements::confidential::{Value,Asset};
-use bitcoin::util::address::Address;
+use utils::address::Address;
 use errors;
 use hex::{self, FromHexError};
 use hyper::{Body, Response, Server, Method, Request, StatusCode};
@@ -512,7 +512,7 @@ fn blocks(query: &Arc<Query>, start_height: Option<usize>)
 
 fn address_to_scripthash(addr: &str, network: &Network) -> Result<FullHash, StringError> {
     let addr = Address::from_str(addr)?;
-    let addr_network = Network::from(&addr.network);
+    let addr_network = addr.network;
     if addr_network != *network && !(addr_network == Network::Testnet && *network == Network::LiquidRegtest) {
         return Err(StringError("Address on invalid network".to_string()))
     }

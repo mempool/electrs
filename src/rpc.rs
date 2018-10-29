@@ -1,6 +1,6 @@
 use elements::Transaction;
 use bitcoin::network::serialize::{deserialize, serialize};
-use bitcoin::util::address::Address;
+use utils::address::Address;
 use bitcoin::util::hash::Sha256dHash;
 use error_chain::ChainedError;
 use hex;

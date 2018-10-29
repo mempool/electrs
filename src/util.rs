@@ -314,11 +314,10 @@ where
 use secp256k1::{Secp256k1};
 use secp256k1::key::PublicKey;
 use bitcoin::{Script};
-use bitcoin::util::address::{Address,Payload};
+use utils::address::{Address,Payload};
 use bitcoin::util::hash::Hash160;
 use bitcoin_bech32::{WitnessProgram,u5};
 use daemon::Network;
-use bitcoin::network::constants::Network as BNetwork;
 use bitcoin_bech32::constants::Network as B32Network;
 
 // @XXX we can't use any of the Address:p2{...}h utility methods, since they expect the pre-image data, which we don't have.
@@ -341,7 +340,7 @@ pub fn script_to_address(script: &Script, network: &Network) -> Option<String> {
                                                          B32Network::from(network)).unwrap()))
     } else { None };
 
-    Some(Address { payload: payload?, network: BNetwork::from(network) }.to_string())
+    Some(Address { payload: payload?, network: *network }.to_string())
 }
 
 use hex;
