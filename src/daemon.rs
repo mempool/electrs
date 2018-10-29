@@ -2,6 +2,9 @@ use base64;
 use elements::{Block, BlockHeader, Transaction};
 use bitcoin::network::serialize::{BitcoinHash, deserialize, serialize};
 use bitcoin::util::hash::Sha256dHash;
+use bitcoin::blockdata::constants::genesis_block;
+use bitcoin::network::constants::Network as BNetwork;
+use bitcoin_bech32::constants::Network as B32Network;
 use glob;
 use hex;
 use serde_json::{from_str, from_value, Value};
@@ -26,6 +29,63 @@ pub enum Network {
     Liquid,
     LiquidV1,
     LiquidRegtest,
+}
+
+impl Network {
+    pub fn genesis_hash(&self) -> Sha256dHash {
+        let block = genesis_block(BNetwork::from(self));
+        block.bitcoin_hash()
+    }
+}
+
+impl<'a> From<&'a str> for Network {
+    fn from(network_name: &'a str) -> Self {
+        match network_name {
+            "mainnet" => Network::Bitcoin,
+            "testnet" => Network::Testnet,
+            "regtest" => Network::Regtest,
+            "liquid" => Network::Liquid,
+            "liquidv1" => Network::LiquidV1,
+            "liquidregtest" => Network::LiquidRegtest,
+            _ => panic!("unsupported Bitcoin network: {:?}", network_name),
+        }
+    }
+}
+
+impl<'a> From<&'a Network> for BNetwork {
+    fn from(network: &'a Network) -> Self {
+        match network {
+            Network::Bitcoin => BNetwork::Bitcoin,
+            Network::Testnet => BNetwork::Testnet,
+            Network::Regtest => BNetwork::Regtest,
+            Network::Liquid => BNetwork::Bitcoin, // @FIXME
+            Network::LiquidV1 => BNetwork::Bitcoin, // @FIXME
+            Network::LiquidRegtest => BNetwork::Regtest, // @FIXME
+        }
+    }
+}
+
+impl<'a> From<&'a Network> for B32Network {
+    fn from(network: &'a Network) -> Self {
+        match network {
+            Network::Bitcoin => B32Network::Bitcoin,
+            Network::Testnet => B32Network::Testnet,
+            Network::Regtest => B32Network::Regtest,
+            Network::Liquid => B32Network::Bitcoin, // @FIXME
+            Network::LiquidV1 => B32Network::Bitcoin, // @FIXME
+            Network::LiquidRegtest => B32Network::Regtest, // @FIXME
+        }
+    }
+}
+
+impl<'a> From<&'a BNetwork> for Network {
+    fn from(network: &'a BNetwork) -> Self {
+        match network {
+            BNetwork::Bitcoin => Network::Liquid, // @FIXME
+            BNetwork::Regtest => Network::LiquidRegtest, // @FIXME
+            BNetwork::Testnet => Network::Testnet, // @FIXME
+        }
+    }
 }
 
 fn parse_hash(value: &Value) -> Result<Sha256dHash> {

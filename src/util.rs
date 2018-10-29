@@ -334,45 +334,14 @@ pub fn script_to_address(script: &Script, network: &Network) -> Option<String> {
     } else if script.is_v0_p2wpkh() {
         Some(Payload::WitnessProgram(WitnessProgram::new(u5::try_from_u8(0).expect("0<32"),
                                                          script[2..22].to_vec(),
-                                                         to_bech_network(network)).unwrap()))
+                                                         B32Network::from(network)).unwrap()))
     } else if script.is_v0_p2wsh() {
         Some(Payload::WitnessProgram(WitnessProgram::new(u5::try_from_u8(0).expect("0<32"),
                                                          script[2..34].to_vec(),
-                                                         to_bech_network(network)).unwrap()))
+                                                         B32Network::from(network)).unwrap()))
     } else { None };
 
-    Some(Address { payload: payload?, network: to_bitcoin_network(network) }.to_string())
-}
-
-fn to_bitcoin_network (network: &Network) -> BNetwork {
-    match network {
-        Network::Bitcoin => BNetwork::Bitcoin,
-        Network::Testnet => BNetwork::Testnet,
-        Network::Regtest => BNetwork::Regtest,
-        Network::Liquid => BNetwork::Bitcoin, // @FIXME
-        Network::LiquidV1 => BNetwork::Bitcoin, // @FIXME
-        Network::LiquidRegtest => BNetwork::Regtest, // @FIXME
-    }
-}
-
-fn to_bech_network (network: &Network) -> B32Network {
-    match network {
-        Network::Bitcoin => B32Network::Bitcoin,
-        Network::Testnet => B32Network::Testnet,
-        Network::Regtest => B32Network::Regtest,
-        Network::Liquid => B32Network::Bitcoin, // @FIXME
-        Network::LiquidV1 => B32Network::Bitcoin, // @FIXME
-        Network::LiquidRegtest => B32Network::Regtest, // @FIXME
-    }
-}
-
-// @FIXME
-pub fn from_bitcoin_network (network: &BNetwork) -> Network {
-    match network {
-        BNetwork::Bitcoin => Network::Liquid,
-        BNetwork::Regtest => Network::LiquidRegtest,
-        BNetwork::Testnet => Network::Testnet,
-    }
+    Some(Address { payload: payload?, network: BNetwork::from(network) }.to_string())
 }
 
 use hex;
@@ -387,7 +356,7 @@ pub struct PegOutRequest {
 }
 
 impl PegOutRequest {
-    pub fn parse(script: &Script, network: &Network) -> Option<PegOutRequest> {
+    pub fn parse(script: &Script, parent_network: &Network, parent_genesis_hash: &str) -> Option<PegOutRequest> {
         if !script.is_op_return() { return None; }
 
         let nulldata: Vec<_> = script.iter(true).skip(1).collect();
@@ -399,8 +368,10 @@ impl PegOutRequest {
         let scriptpubkey = if let PushBytes(data) = nulldata[1] { Script::from(data.to_vec()) }
             else { return None };
 
+        if genesis_hash != parent_genesis_hash { return None; }
+
         let scriptpubkey_asm = get_script_asm(&scriptpubkey);
-        let scriptpubkey_address = script_to_address(&scriptpubkey, network);
+        let scriptpubkey_address = script_to_address(&scriptpubkey, parent_network);
 
         Some(PegOutRequest { genesis_hash, scriptpubkey, scriptpubkey_asm, scriptpubkey_address })
     }

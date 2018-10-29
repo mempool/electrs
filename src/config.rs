@@ -12,11 +12,13 @@ use daemon::CookieGetter;
 use errors::*;
 use daemon::Network;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     // See below for the documentation of each field:
     pub log: stderrlog::StdErrLog,
     pub network_type: Network,
+    pub parent_network: Network,
+    pub parent_genesis_hash: String,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
     pub daemon_rpc_addr: SocketAddr,
@@ -69,6 +71,12 @@ impl Config {
                     .takes_value(true),
             )
             .arg(
+                Arg::with_name("parent_network")
+                    .long("parent-network")
+                    .help("Select parent network type ('mainnet', 'testnet', 'regtest', 'liquid', 'liquidregtest')")
+                    .takes_value(true),
+            )
+            .arg(
                 Arg::with_name("electrum_rpc_addr")
                     .long("electrum-rpc-addr")
                     .help("Electrum server JSONRPC 'addr:port' to listen on (default: '127.0.0.1:50001' for mainnet, '127.0.0.1:60001' for testnet and '127.0.0.1:60401' for regtest)")
@@ -112,17 +120,12 @@ impl Config {
             .get_matches();
 
         let network_name = m.value_of("network").unwrap_or("mainnet");
-        let network_type = match network_name {
-            "mainnet" => Network::Bitcoin,
-            "testnet" => Network::Testnet,
-            "regtest" => Network::Regtest,
-            "liquid" => Network::Liquid,
-            "liquidv1" => Network::LiquidV1,
-            "liquidregtest" => Network::LiquidRegtest,
-            _ => panic!("unsupported Bitcoin network: {:?}", network_name),
-        };
+        let network_type = Network::from(network_name);
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
         let db_path = db_dir.join(network_name);
+
+        let parent_network = Network::from(m.value_of("parent_network").unwrap_or("mainnet"));
+        let parent_genesis_hash = parent_network.genesis_hash().le_hex_string();
 
         let default_daemon_port = match network_type {
             Network::Bitcoin => 8332,
@@ -198,6 +201,8 @@ impl Config {
         let config = Config {
             log,
             network_type,
+            parent_network,
+            parent_genesis_hash,
             db_path,
             daemon_dir,
             daemon_rpc_addr,
