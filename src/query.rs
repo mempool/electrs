@@ -319,7 +319,7 @@ impl Query {
         tx_hash: &Sha256dHash,
         block_height: Option<u32>,
     ) -> Result<Option<Sha256dHash>> {
-        let blockhash = if self.tracker.read().unwrap().get_txn(&tx_hash).is_some() {
+        let blockhash = if self.tracker.read().unwrap().contains(&tx_hash) {
             None // found in mempool (as unconfirmed transaction)
         } else {
             // Lookup in confirmed transactions' index

@@ -171,8 +171,8 @@ impl Tracker {
         }
     }
 
-    pub fn get_txn(&self, txid: &Sha256dHash) -> Option<Transaction> {
-        self.items.get(txid).map(|stats| stats.tx.clone())
+    pub fn contains(&self, txid: &Sha256dHash) -> bool {
+        self.items.contains_key(txid)
     }
 
     /// Returns vector of (fee_rate, vsize) pairs, where fee_{n-1} > fee_n and vsize_n is the
