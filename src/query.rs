@@ -28,6 +28,7 @@ pub struct FundingOutput {
     pub height: u32,
     pub output_index: usize,
     pub value: u64,
+    pub asset: Option<Sha256dHash>,
 }
 
 impl From<OutPoint> for FundingOutput {
@@ -38,6 +39,7 @@ impl From<OutPoint> for FundingOutput {
             txn: None,
             height: 0,
             value: 0,
+            asset: None,
         }
     }
 }
@@ -311,6 +313,10 @@ impl Query {
                     confidential::Value::Explicit(val) => val,
                     _ => 0,
                 };
+                let asset = match output.asset {
+                    confidential::Asset::Explicit(val) => Some(val),
+                    _ => None,
+                };
 
                 result.push(FundingOutput {
                     txn: Some(t.clone()),
@@ -318,6 +324,7 @@ impl Query {
                     height: t.height,
                     output_index: index,
                     value: value,
+                    asset: asset,
                 })
             }
         }

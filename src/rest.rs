@@ -294,18 +294,20 @@ impl From<TxOut> for TxOutValue {
 struct UtxoValue {
     txid: Sha256dHash,
     vout: u32,
-    value: u64,
+    value: Option<u64>,
+    asset: Option<String>,
     status: TransactionStatus,
 }
 impl From<FundingOutput> for UtxoValue {
     fn from(out: FundingOutput) -> Self {
-        let FundingOutput { txn, txn_id, output_index, value, .. } = out;
+        let FundingOutput { txn, txn_id, output_index, value, asset, .. } = out;
         let TxnHeight { height, blockhash, .. } = txn.unwrap(); // we should never get a FundingOutput without a txn here
 
         UtxoValue {
             txid: txn_id,
             vout: output_index as u32,
-            value: value,
+            value: if value != 0 { Some(value) } else { None },
+            asset: asset.map(|val| val.be_hex_string()),
             status: if height != 0 {
               TransactionStatus { confirmed: true, block_height: Some(height), block_hash: Some(blockhash) }
             } else {
@@ -561,6 +563,7 @@ fn http_message(status: StatusCode, message: String) -> Response<Body> {
     Response::builder()
         .status(status)
         .header("Content-Type", "text/plain")
+        .header("Access-Control-Allow-Origin", "*")
         .body(Body::from(message))
         .unwrap()
 }
@@ -569,6 +572,7 @@ fn json_response<T: Serialize>(value : T) -> Result<Response<Body>,HttpError> {
     let value = serde_json::to_string(&value)?;
     Ok(Response::builder()
         .header("Content-type","application/json")
+        .header("Access-Control-Allow-Origin", "*")
         .body(Body::from(value)).unwrap())
 }
 
