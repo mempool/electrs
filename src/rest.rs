@@ -153,7 +153,7 @@ impl From<TxIn> for TxInValue {
                 _ => None
             },
             tokenamount: match issuance.inflation_keys {
-                Value::Explicit(value) => Some(value),
+                Value::Explicit(value) => Some(value / 100000000), // https://github.com/ElementsProject/rust-elements/issues/7
                 _ => None,
             },
             tokenamountcommitment: match issuance.inflation_keys {
