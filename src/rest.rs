@@ -129,11 +129,39 @@ struct TxInValue {
     scriptsig_asm: String,
     is_coinbase: bool,
     sequence: u32,
+    issuance: Option<IssuanceValue>,
 }
 
 impl From<TxIn> for TxInValue {
     fn from(txin: TxIn) -> Self {
         let is_coinbase = txin.is_coinbase();
+
+        let zero = [0u8;32];
+        let issuance = txin.asset_issuance;
+        let is_reissuance = issuance.asset_blinding_nonce != zero;
+
+        let issuance_val = if txin.has_issuance() { Some(IssuanceValue {
+            is_reissuance: is_reissuance,
+            asset_blinding_nonce: if is_reissuance { Some(hex::encode(issuance.asset_blinding_nonce)) } else { None },
+            asset_entropy: if issuance.asset_entropy != zero { Some(hex::encode(issuance.asset_entropy)) } else { None },
+            assetamount: match issuance.amount {
+                Value::Explicit(value) => Some(value),
+                _ => None
+            },
+            assetamountcommitment: match issuance.amount {
+                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.amount).unwrap())),
+                _ => None
+            },
+            tokenamount: match issuance.inflation_keys {
+                Value::Explicit(value) => Some(value),
+                _ => None,
+            },
+            tokenamountcommitment: match issuance.inflation_keys {
+                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.inflation_keys).unwrap())),
+                _ => None
+            },
+        }) } else { None };
+
         let script = txin.script_sig;
 
         TxInValue {
@@ -143,9 +171,54 @@ impl From<TxIn> for TxInValue {
             scriptsig_hex: script,
             is_coinbase,
             sequence: txin.sequence,
+            //issuance: if txin.has_issuance() { Some(IssuanceValue::from(txin.asset_issuance)) } else { None },
+            issuance: issuance_val
         }
     }
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+struct IssuanceValue {
+    pub is_reissuance: bool,
+    pub asset_blinding_nonce: Option<String>,
+    pub asset_entropy: Option<String>,
+    pub assetamount: Option<u64>,
+    pub assetamountcommitment: Option<String>,
+    pub tokenamount: Option<u64>,
+    pub tokenamountcommitment: Option<String>,
+}
+
+/*
+// pending https://github.com/ElementsProject/rust-elements/pull/6
+impl From<AssetIssuance> for IssuanceValue {
+    fn from(issuance: AssetIssuance) -> Self {
+        let zero = [0u8;32];
+        let is_reissuance = issuance.asset_blinding_nonce != zero;
+
+        IssuanceValue {
+            is_reissuance: is_reissuance,
+            asset_blinding_nonce: if is_reissuance { Some(hex::encode(issuance.asset_blinding_nonce)) } else { None },
+            asset_entropy: hex::encode(issuance.asset_entropy),
+            assetamount: match issuance.amount {
+                Asset::Explicit(value) => Some(value.be_hex_string()),
+                _ => None
+            },
+            amountcommitment: match issuance.amount {
+                Asset::Confidential(..) => Some(hex::encode(serialize(&issuance.amount).unwrap())),
+                _ => None
+            },
+            tokenamount: match issuance.inflation_keys {
+                Value::Explicit(value) => Some(value),
+                _ => None,
+            },
+            tokenamountcommitment: match issuance.inflation_keys {
+                Asset::Confidential(..) => Some(hex::encode(serialize(&issuance.inflation_keys).unwrap())),
+                _ => None
+            },
+        }
+    }
+}
+*/
 
 #[derive(Serialize, Deserialize, Clone)]
 struct TxOutValue {
@@ -155,6 +228,7 @@ struct TxOutValue {
     asset: Option<String>,
     assetcommitment: Option<String>,
     value: Option<u64>,
+    valuecommitment: Option<String>,
     scriptpubkey_type: String,
     pegout: Option<PegOutRequest>,
 }
@@ -172,6 +246,10 @@ impl From<TxOut> for TxOutValue {
         let value = match txout.value {
             Value::Explicit(value) => Some(value),
             _ => None,
+        };
+        let valuecommitment = match txout.value {
+            Value::Confidential(..) => Some(hex::encode(serialize(&txout.value).unwrap())),
+            _ => None
         };
         let is_fee = txout.is_fee();
         let script = txout.script_pubkey;
@@ -205,6 +283,7 @@ impl From<TxOut> for TxOutValue {
             asset,
             assetcommitment,
             value,
+            valuecommitment,
             scriptpubkey_type: script_type.to_string(),
             pegout: None, // added later
         }
