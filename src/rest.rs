@@ -2,7 +2,7 @@ use bitcoin::util::hash::{Sha256dHash,HexError};
 use bitcoin::network::serialize::serialize;
 use bitcoin::{Script,network,BitcoinHash};
 use config::Config;
-use elements::{TxIn,TxOut,OutPoint,Transaction,Proof};
+use elements::{TxIn,TxOut,Transaction,Proof};
 use elements::confidential::{Value,Asset};
 use utils::address::Address;
 use errors;
@@ -123,11 +123,13 @@ impl From<TxnHeight> for TransactionValue {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct TxInValue {
-    outpoint: OutPoint,
+    txid: Sha256dHash,
+    vout: u32,
     prevout: Option<TxOutValue>,
-    scriptsig_hex: Script,
+    scriptsig: Script,
     scriptsig_asm: String,
     is_coinbase: bool,
+    is_pegin: bool,
     sequence: u32,
     issuance: Option<IssuanceValue>,
 }
@@ -165,10 +167,12 @@ impl From<TxIn> for TxInValue {
         let script = txin.script_sig;
 
         TxInValue {
-            outpoint: txin.previous_output,
+            txid: txin.previous_output.txid,
+            vout: txin.previous_output.vout,
+            is_pegin: txin.previous_output.is_pegin,
             prevout: None, // added later
             scriptsig_asm: get_script_asm(&script),
-            scriptsig_hex: script,
+            scriptsig: script,
             is_coinbase,
             sequence: txin.sequence,
             //issuance: if txin.has_issuance() { Some(IssuanceValue::from(txin.asset_issuance)) } else { None },
@@ -222,7 +226,7 @@ impl From<AssetIssuance> for IssuanceValue {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct TxOutValue {
-    scriptpubkey_hex: Script,
+    scriptpubkey: Script,
     scriptpubkey_asm: String,
     scriptpubkey_address: Option<String>,
     asset: Option<String>,
@@ -277,7 +281,7 @@ impl From<TxOut> for TxOutValue {
         };
 
         TxOutValue {
-            scriptpubkey_hex: script,
+            scriptpubkey: script,
             scriptpubkey_asm: script_asm,
             scriptpubkey_address: None, // added later
             asset,
@@ -367,15 +371,15 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
     for mut tx in txs.iter_mut() {
         // collect lookups
         for mut vin in tx.vin.iter_mut() {
-            if !vin.is_coinbase && !vin.outpoint.is_pegin {
-                lookups.entry(vin.outpoint.txid).or_insert(vec![]).push((vin.outpoint.vout, vin));
+            if !vin.is_coinbase && !vin.is_pegin {
+                lookups.entry(vin.txid).or_insert(vec![]).push((vin.vout, vin));
             }
         }
         // attach encoded address and pegout info (should ideally happen in TxOutValue::from(),
         // but it cannot easily access the network)
         for mut vout in tx.vout.iter_mut() {
-            vout.scriptpubkey_address = script_to_address(&vout.scriptpubkey_hex, &config.network_type);
-            vout.pegout = PegOutRequest::parse(&vout.scriptpubkey_hex, &config.parent_network, &config.parent_genesis_hash);
+            vout.scriptpubkey_address = script_to_address(&vout.scriptpubkey, &config.network_type);
+            vout.pegout = PegOutRequest::parse(&vout.scriptpubkey, &config.parent_network, &config.parent_genesis_hash);
         }
     }
 
@@ -384,7 +388,7 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
         let prevtx = query.tx_get(&prev_txid).unwrap();
         for (prev_out_idx, ref mut nextin) in prev_vouts {
             let mut prevout = TxOutValue::from(prevtx.output[prev_out_idx as usize].clone());
-            prevout.scriptpubkey_address = script_to_address(&prevout.scriptpubkey_hex, &config.network_type);
+            prevout.scriptpubkey_address = script_to_address(&prevout.scriptpubkey, &config.network_type);
             nextin.prevout = Some(prevout);
         }
     }
@@ -428,10 +432,10 @@ fn handle_request(req: Request<Body>, query: &Arc<Query>, config: &Config) -> Re
     let path: Vec<&str> = uri.path().split('/').skip(1).collect();
     info!("path {:?}", path);
     match (req.method(), path.get(0), path.get(1), path.get(2), path.get(3)) {
-        (&Method::GET, Some(&"tip"), Some(&"hash"), None, None) =>
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None) =>
             Ok(http_message(StatusCode::OK, query.get_best_header_hash().be_hex_string())),
 
-        (&Method::GET, Some(&"tip"), Some(&"height"), None, None) =>
+        (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None) =>
             Ok(http_message(StatusCode::OK, query.get_best_height().to_string())),
 
         (&Method::GET, Some(&"blocks"), start_height, None, None) => {
