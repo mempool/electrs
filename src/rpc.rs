@@ -1,5 +1,5 @@
 use elements::Transaction;
-use bitcoin::network::serialize::{deserialize, serialize};
+use bitcoin::consensus::encode::{deserialize, serialize};
 use utils::address::Address;
 use bitcoin::util::hash::Sha256dHash;
 use error_chain::ChainedError;
@@ -97,7 +97,7 @@ impl Connection {
 
     fn blockchain_headers_subscribe(&mut self) -> Result<Value> {
         let entry = self.query.get_best_header()?;
-        let hex_header = hex::encode(serialize(entry.header()).unwrap());
+        let hex_header = hex::encode(serialize(entry.header()));
         let result = json!({"hex": hex_header, "height": entry.height()});
         self.last_header_entry = Some(entry);
         Ok(result)
@@ -131,7 +131,7 @@ impl Connection {
             .query
             .get_headers(&heights)
             .into_iter()
-            .map(|entry| hex::encode(&serialize(entry.header()).unwrap()))
+            .map(|entry| hex::encode(&serialize(entry.header())))
             .collect();
         Ok(json!({
             "count": headers.len(),
@@ -155,7 +155,7 @@ impl Connection {
         let entries = self.query.get_headers(&[height]);
 
         let block = self.query.get_block(&entries.get(0).unwrap().hash());
-        let block_hex = hex::encode(serialize(&block.unwrap()).unwrap());
+        let block_hex = hex::encode(serialize(&block.unwrap()));
 
         Ok(json!({"hex": &block_hex}))
     }
@@ -164,7 +164,7 @@ impl Connection {
         let block_hash = hash_from_value(params.get(0)).chain_err(|| "bad block_hash")?;
 
         let block = self.query.get_block(&block_hash);
-        let block_hex = hex::encode(serialize(&block.unwrap()).unwrap());
+        let block_hex = hex::encode(serialize(&block.unwrap()));
 
         Ok(json!({"hex": &block_hex}))
     }
@@ -350,7 +350,7 @@ impl Connection {
             let entry = self.query.get_best_header()?;
             if *last_entry != entry {
                 *last_entry = entry;
-                let hex_header = hex::encode(serialize(last_entry.header()).unwrap());
+                let hex_header = hex::encode(serialize(last_entry.header()));
                 let header = json!({"hex": hex_header, "height": last_entry.height()});
                 result.push(json!({
                     "jsonrpc": "2.0",

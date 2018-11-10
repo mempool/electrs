@@ -1,6 +1,6 @@
 use bitcoin::util::hash::{Sha256dHash,HexError};
-use bitcoin::network::serialize::serialize;
-use bitcoin::{Script,network,BitcoinHash};
+use bitcoin::consensus::{self, encode::serialize};
+use bitcoin::{Script, BitcoinHash};
 use config::Config;
 use elements::{TxIn,TxOut,Transaction,Proof};
 use elements::confidential::{Value,Asset};
@@ -97,7 +97,7 @@ impl From<Transaction> for TransactionValue {
     fn from(tx: Transaction) -> Self {
         let vin = tx.input.iter().map(|el| TxInValue::from(el.clone())).collect();
         let vout: Vec<TxOutValue> = tx.output.iter().map(|el| TxOutValue::from(el.clone())).collect();
-        let bytes = serialize(&tx).unwrap();
+        let bytes = serialize(&tx);
         let fee = vout.iter().find(|vout| vout.scriptpubkey_type == "fee")
                              .map_or(0, |vout| vout.value.unwrap());
 
@@ -159,7 +159,7 @@ impl From<TxIn> for TxInValue {
                 _ => None
             },
             assetamountcommitment: match issuance.amount {
-                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.amount).unwrap())),
+                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.amount))),
                 _ => None
             },
             tokenamount: match issuance.inflation_keys {
@@ -167,7 +167,7 @@ impl From<TxIn> for TxInValue {
                 _ => None,
             },
             tokenamountcommitment: match issuance.inflation_keys {
-                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.inflation_keys).unwrap())),
+                Value::Confidential(..) => Some(hex::encode(serialize(&issuance.inflation_keys))),
                 _ => None
             },
         }) } else { None };
@@ -177,7 +177,7 @@ impl From<TxIn> for TxInValue {
         TxInValue {
             txid: txin.previous_output.txid,
             vout: txin.previous_output.vout,
-            is_pegin: txin.previous_output.is_pegin,
+            is_pegin: txin.is_pegin,
             prevout: None, // added later
             scriptsig_asm: get_script_asm(&script),
             scriptsig: script,
@@ -252,7 +252,7 @@ impl From<TxOut> for TxOutValue {
             _ => None
         };
         let assetcommitment = match txout.asset {
-            Asset::Confidential(..) => Some(hex::encode(serialize(&txout.asset).unwrap())),
+            Asset::Confidential(..) => Some(hex::encode(serialize(&txout.asset))),
             _ => None
         };
         let value = match txout.value {
@@ -260,7 +260,7 @@ impl From<TxOut> for TxOutValue {
             _ => None,
         };
         let valuecommitment = match txout.value {
-            Value::Confidential(..) => Some(hex::encode(serialize(&txout.value).unwrap())),
+            Value::Confidential(..) => Some(hex::encode(serialize(&txout.value))),
             _ => None
         };
         let is_fee = txout.is_fee();
@@ -704,8 +704,8 @@ impl From<serde_json::Error> for HttpError {
         HttpError::generic()
     }
 }
-impl From<network::serialize::Error> for HttpError {
-    fn from(_e: network::serialize::Error) -> Self {
+impl From<consensus::encode::Error> for HttpError {
+    fn from(_e: consensus::encode::Error) -> Self {
         //HttpError::from(e.description().to_string())
         HttpError::generic()
     }

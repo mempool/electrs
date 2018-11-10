@@ -43,9 +43,10 @@ url = "1.0"
 lru-cache = "0.1.1"
 
 [dependencies.elements]
-version = "0.1.2"
+git = "https://github.com/ElementsProject/rust-elements/"
+rev = "5f4531fb3059b2ecee5af2b1fd800b8dcbbe06d1" # from 2018-11-bitcoin-015 branch
 features = ["serde-feature"] # Doesn't look to work by now
 
 [dependencies.bitcoin]
-version = "0.14"
+version = "0.15.1"
 
