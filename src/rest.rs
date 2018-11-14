@@ -33,10 +33,12 @@ const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 struct BlockValue {
     id: String,
     height: u32,
+    version: u32,
     timestamp: u32,
     tx_count: u32,
     size: u32,
     weight: u32,
+    merkle_root: String,
     previousblockhash: Option<String>,
     proof: Option<BlockProofValue>
 }
@@ -48,10 +50,12 @@ impl From<BlockHeaderMeta> for BlockValue {
             id: header.bitcoin_hash().be_hex_string(),
             height: blockhm.header_entry.height() as u32,
             proof: Some(BlockProofValue::from(header.proof.clone())),
+            version: header.version,
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
             weight: blockhm.meta.weight,
+            merkle_root: header.merkle_root.be_hex_string(),
             previousblockhash: if &header.prev_blockhash != &Sha256dHash::default() { Some(header.prev_blockhash.be_hex_string()) }
                                else { None },
         }
