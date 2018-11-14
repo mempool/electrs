@@ -22,7 +22,7 @@ use daemon::Network;
 use util::{FullHash, BlockHeaderMeta, TransactionStatus, PegOutRequest, script_to_address, get_script_asm};
 use index::compute_script_hash;
 
-const TX_LIMIT: usize = 50;
+const TX_LIMIT: usize = 25;
 const BLOCK_LIMIT: usize = 10;
 
 const TTL_LONG: u32 = 157784630; // ttl for static resources (5 years)
@@ -597,7 +597,7 @@ fn http_message(status: StatusCode, message: String, ttl: u32) -> Result<Respons
 fn json_response<T: Serialize>(value : T, ttl: u32) -> Result<Response<Body>,HttpError> {
     let value = serde_json::to_string(&value)?;
     Ok(Response::builder()
-        .header("Content-type","application/json")
+        .header("Content-Type","application/json")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
         .body(Body::from(value))
         .unwrap())
