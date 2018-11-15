@@ -4,10 +4,10 @@ extern crate error_chain;
 #[macro_use]
 extern crate log;
 
+use electrs::rest;
 use error_chain::ChainedError;
 use std::process;
 use std::time::Duration;
-use electrs::rest;
 
 use electrs::{
     app::App,
@@ -81,11 +81,8 @@ fn run_server(config: &Config) -> Result<()> {
 fn main() {
     let config = Config::from_args();
 
-
-
     if let Err(e) = run_server(&config) {
         error!("server failed: {}", e.display_chain());
         process::exit(1);
     }
 }
-

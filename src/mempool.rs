@@ -1,5 +1,5 @@
-use elements::Transaction;
 use bitcoin::util::hash::Sha256dHash;
+use elements::Transaction;
 use hex;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;

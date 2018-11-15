@@ -1,7 +1,6 @@
-use elements::Transaction;
 use bitcoin::consensus::encode::{deserialize, serialize};
-use utils::address::Address;
 use bitcoin::util::hash::Sha256dHash;
+use elements::Transaction;
 use error_chain::ChainedError;
 use hex;
 use serde_json::{from_str, Number, Value};
@@ -12,6 +11,7 @@ use std::str::FromStr;
 use std::sync::mpsc::{Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use utils::address::Address;
 
 use index::compute_script_hash;
 use metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
@@ -157,7 +157,7 @@ impl Connection {
         let block = self.query.get_block(&entries.get(0).unwrap().hash());
         let block_hex = hex::encode(serialize(&block.unwrap()));
 
-        Ok(json!({"hex": &block_hex}))
+        Ok(json!({ "hex": &block_hex }))
     }
 
     fn blockchain_block_get(&self, params: &[Value]) -> Result<Value> {
@@ -166,7 +166,7 @@ impl Connection {
         let block = self.query.get_block(&block_hash);
         let block_hex = hex::encode(serialize(&block.unwrap()));
 
-        Ok(json!({"hex": &block_hex}))
+        Ok(json!({ "hex": &block_hex }))
     }
 
     fn blockchain_estimatefee(&self, params: &[Value]) -> Result<Value> {
@@ -275,7 +275,11 @@ impl Connection {
     fn blockchain_transaction_get_merkle(&self, params: &[Value]) -> Result<Value> {
         let tx_hash = hash_from_value(params.get(0)).chain_err(|| "bad tx_hash")?;
         let height = usize_from_value(params.get(1), "height")?;
-        let header = self.query.get_headers(&vec![height]).pop().chain_err(|| "block not found")?;
+        let header = self
+            .query
+            .get_headers(&vec![height])
+            .pop()
+            .chain_err(|| "block not found")?;
         let (merkle, pos) = self
             .query
             .get_merkle_proof(&tx_hash, &header.hash())

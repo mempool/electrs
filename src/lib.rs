@@ -4,14 +4,16 @@ extern crate base64;
 extern crate bincode;
 extern crate bitcoin;
 extern crate bitcoin_bech32;
-extern crate elements;
 extern crate chan_signal;
 extern crate crypto;
 extern crate dirs;
+extern crate elements;
 extern crate glob;
 extern crate hex;
+extern crate hyper;
 extern crate libc;
 extern crate lru;
+extern crate lru_cache;
 extern crate num_cpus;
 extern crate page_size;
 extern crate prometheus;
@@ -23,8 +25,6 @@ extern crate sysconf;
 extern crate time;
 extern crate tiny_http;
 extern crate url;
-extern crate hyper;
-extern crate lru_cache;
 
 #[macro_use]
 extern crate chan;
@@ -41,8 +41,6 @@ extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
 
-
-
 pub mod app;
 pub mod bulk;
 pub mod config;
@@ -53,9 +51,9 @@ pub mod index;
 pub mod mempool;
 pub mod metrics;
 pub mod query;
+pub mod rest;
 pub mod rpc;
 pub mod signal;
 pub mod store;
 pub mod util;
-pub mod rest;
 pub mod utils;

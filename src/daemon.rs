@@ -1,11 +1,11 @@
 use base64;
-use elements::{Block, BlockHeader, Transaction};
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::consensus::encode::{deserialize, serialize};
+use bitcoin::network::constants::Network as BNetwork;
 use bitcoin::util::hash::BitcoinHash;
 use bitcoin::util::hash::Sha256dHash;
-use bitcoin::blockdata::constants::genesis_block;
-use bitcoin::network::constants::Network as BNetwork;
 use bitcoin_bech32::constants::Network as B32Network;
+use elements::{Block, BlockHeader, Transaction};
 use glob;
 use hex;
 use serde_json::{from_str, from_value, Value};
@@ -59,7 +59,7 @@ impl<'a> From<&'a Network> for BNetwork {
             Network::Bitcoin => BNetwork::Bitcoin,
             Network::Testnet => BNetwork::Testnet,
             Network::Regtest => BNetwork::Regtest,
-            Network::Liquid => BNetwork::Bitcoin, // @FIXME
+            Network::Liquid => BNetwork::Bitcoin,   // @FIXME
             Network::LiquidV1 => BNetwork::Bitcoin, // @FIXME
             Network::LiquidRegtest => BNetwork::Regtest, // @FIXME
         }
@@ -82,9 +82,9 @@ impl<'a> From<&'a Network> for B32Network {
 impl<'a> From<&'a BNetwork> for Network {
     fn from(network: &'a BNetwork) -> Self {
         match network {
-            BNetwork::Bitcoin => Network::Liquid, // @FIXME
+            BNetwork::Bitcoin => Network::Liquid,        // @FIXME
             BNetwork::Regtest => Network::LiquidRegtest, // @FIXME
-            BNetwork::Testnet => Network::Testnet, // @FIXME
+            BNetwork::Testnet => Network::Testnet,       // @FIXME
         }
     }
 }
@@ -556,19 +556,12 @@ impl Daemon {
         Ok(blocks)
     }
 
-    pub fn gettransaction(
-        &self,
-        txhash: &Sha256dHash
-    ) -> Result<Transaction> {
-        let  args = json!([txhash.be_hex_string(), /*verbose=*/ false]);
+    pub fn gettransaction(&self, txhash: &Sha256dHash) -> Result<Transaction> {
+        let args = json!([txhash.be_hex_string(), /*verbose=*/ false]);
         tx_from_value(self.request("getrawtransaction", args)?)
     }
 
-    pub fn gettransaction_raw(
-        &self,
-        txhash: &Sha256dHash,
-        verbose: bool,
-    ) -> Result<Value> {
+    pub fn gettransaction_raw(&self, txhash: &Sha256dHash, verbose: bool) -> Result<Value> {
         let args = json!([txhash.be_hex_string(), verbose]);
         debug!("gettransaction_raw args {:?}", args);
         Ok(self.request("getrawtransaction", args)?)

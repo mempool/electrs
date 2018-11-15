@@ -9,8 +9,8 @@ use stderrlog;
 
 use daemon::CookieGetter;
 
-use errors::*;
 use daemon::Network;
+use errors::*;
 
 #[derive(Debug, Clone)]
 pub struct Config {

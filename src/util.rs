@@ -1,6 +1,6 @@
-use elements::{Block, BlockHeader};
 use bitcoin::consensus::encode::serialize;
 use bitcoin::util::hash::{BitcoinHash, Sha256dHash};
+use elements::{Block, BlockHeader};
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::FromIterator;
@@ -26,7 +26,6 @@ pub fn hash_prefix(hash: &[u8]) -> HashPrefix {
 pub fn full_hash(hash: &[u8]) -> FullHash {
     array_ref![hash, 0, HASH_LEN].clone()
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct TransactionStatus {
@@ -80,7 +79,6 @@ impl<'a> From<&'a Block> for BlockMeta {
         }
     }
 }
-
 
 #[derive(Eq, PartialEq, Clone)]
 pub struct HeaderEntry {
@@ -310,14 +308,12 @@ where
         .unwrap()
 }
 
-
-
-use bitcoin::{Script};
-use utils::address::{Address,Payload};
 use bitcoin::util::hash::Hash160;
-use bitcoin_bech32::{WitnessProgram,u5};
-use daemon::Network;
+use bitcoin::Script;
 use bitcoin_bech32::constants::Network as B32Network;
+use bitcoin_bech32::{u5, WitnessProgram};
+use daemon::Network;
+use utils::address::{Address, Payload};
 
 // @XXX we can't use any of the Address:p2{...}h utility methods, since they expect the pre-image data, which we don't have.
 // we must instead create the Payload manually, which results in code duplication with the p2{...}h methods, especially for witness programs.
@@ -328,20 +324,35 @@ pub fn script_to_address(script: &Script, network: &Network) -> Option<String> {
     } else if script.is_p2sh() {
         Some(Payload::ScriptHash(Hash160::from(&script[2..22])))
     } else if script.is_v0_p2wpkh() {
-        Some(Payload::WitnessProgram(WitnessProgram::new(u5::try_from_u8(0).expect("0<32"),
-                                                         script[2..22].to_vec(),
-                                                         B32Network::from(network)).unwrap()))
+        Some(Payload::WitnessProgram(
+            WitnessProgram::new(
+                u5::try_from_u8(0).expect("0<32"),
+                script[2..22].to_vec(),
+                B32Network::from(network),
+            ).unwrap(),
+        ))
     } else if script.is_v0_p2wsh() {
-        Some(Payload::WitnessProgram(WitnessProgram::new(u5::try_from_u8(0).expect("0<32"),
-                                                         script[2..34].to_vec(),
-                                                         B32Network::from(network)).unwrap()))
-    } else { None };
+        Some(Payload::WitnessProgram(
+            WitnessProgram::new(
+                u5::try_from_u8(0).expect("0<32"),
+                script[2..34].to_vec(),
+                B32Network::from(network),
+            ).unwrap(),
+        ))
+    } else {
+        None
+    };
 
-    Some(Address { payload: payload?, network: *network }.to_string())
+    Some(
+        Address {
+            payload: payload?,
+            network: *network,
+        }.to_string(),
+    )
 }
 
+use bitcoin::blockdata::script::Instruction::PushBytes;
 use hex;
-use bitcoin::blockdata::script::Instruction::{PushBytes};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PegOutRequest {
@@ -352,28 +363,49 @@ pub struct PegOutRequest {
 }
 
 impl PegOutRequest {
-    pub fn parse(script: &Script, parent_network: &Network, parent_genesis_hash: &str) -> Option<PegOutRequest> {
-        if !script.is_op_return() { return None; }
+    pub fn parse(
+        script: &Script,
+        parent_network: &Network,
+        parent_genesis_hash: &str,
+    ) -> Option<PegOutRequest> {
+        if !script.is_op_return() {
+            return None;
+        }
 
         let nulldata: Vec<_> = script.iter(true).skip(1).collect();
-        if nulldata.len() < 2 { return None; }
+        if nulldata.len() < 2 {
+            return None;
+        }
 
-        let genesis_hash = if let PushBytes(data) = nulldata[0] { hex::encode(data.to_vec()) }
-            else { return None };
+        let genesis_hash = if let PushBytes(data) = nulldata[0] {
+            hex::encode(data.to_vec())
+        } else {
+            return None;
+        };
 
-        let scriptpubkey = if let PushBytes(data) = nulldata[1] { Script::from(data.to_vec()) }
-            else { return None };
+        let scriptpubkey = if let PushBytes(data) = nulldata[1] {
+            Script::from(data.to_vec())
+        } else {
+            return None;
+        };
 
-        if genesis_hash != parent_genesis_hash { return None; }
+        if genesis_hash != parent_genesis_hash {
+            return None;
+        }
 
         let scriptpubkey_asm = get_script_asm(&scriptpubkey);
         let scriptpubkey_address = script_to_address(&scriptpubkey, parent_network);
 
-        Some(PegOutRequest { genesis_hash, scriptpubkey, scriptpubkey_asm, scriptpubkey_address })
+        Some(PegOutRequest {
+            genesis_hash,
+            scriptpubkey,
+            scriptpubkey_asm,
+            scriptpubkey_address,
+        })
     }
 }
 
 pub fn get_script_asm(script: &Script) -> String {
     let asm = format!("{:?}", script);
-    (&asm[7..asm.len()-1]).to_string()
+    (&asm[7..asm.len() - 1]).to_string()
 }

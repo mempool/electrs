@@ -1,6 +1,6 @@
-use elements::Block;
 use bitcoin::consensus::encode::{deserialize, Decodable};
 use bitcoin::util::hash::{BitcoinHash, Sha256dHash};
+use elements::Block;
 use libc;
 use std::collections::HashSet;
 use std::fs;
