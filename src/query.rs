@@ -18,8 +18,6 @@ use util::{
 
 use errors::*;
 
-const FUNDING_TXN_LIMIT: usize = 100;
-
 #[derive(Clone)]
 pub struct FundingOutput {
     pub txn: Option<TxnHeight>,
@@ -167,7 +165,6 @@ fn txids_by_script_hash(store: &ReadStore, script_hash: &[u8]) -> Vec<HashPrefix
     store
         .scan(&TxOutRow::filter(script_hash))
         .iter()
-        .take(FUNDING_TXN_LIMIT + 1)
         .map(|row| TxOutRow::from_row(row).txid_prefix)
         .collect()
 }
@@ -228,10 +225,6 @@ impl Query {
         store: &ReadStore,
         prefixes: Vec<HashPrefix>,
     ) -> Result<Vec<TxnHeight>> {
-        if prefixes.len() > FUNDING_TXN_LIMIT {
-            bail!("Too many txs");
-        }
-
         let mut txns = vec![];
         let _timer = self
             .latency
