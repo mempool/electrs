@@ -315,12 +315,14 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
 
         for mut tx in txs.iter_mut() {
             // collect lookups
-            for mut vin in tx.vin.iter_mut() {
-                if !vin.is_coinbase {
-                    lookups
-                        .entry(vin.txid)
-                        .or_insert(vec![])
-                        .push((vin.vout, vin));
+            if config.prevout_enabled {
+                for mut vin in tx.vin.iter_mut() {
+                    if !vin.is_coinbase {
+                        lookups
+                            .entry(vin.txid)
+                            .or_insert(vec![])
+                            .push((vin.vout, vin));
+                    }
                 }
             }
             // attach encoded address (should ideally happen in TxOutValue::from(), but it cannot
@@ -332,30 +334,34 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
         }
 
         // fetch prevtxs and attach prevouts to nextins
-        for (prev_txid, prev_vouts) in lookups {
-            let prevtx = query.load_txn(&prev_txid, None).unwrap();
-            for (prev_out_idx, ref mut nextin) in prev_vouts {
-                let mut prevout = TxOutValue::from(prevtx.output[prev_out_idx as usize].clone());
-                prevout.scriptpubkey_address =
-                    script_to_address(&prevout.scriptpubkey, &config.network_type);
-                nextin.prevout = Some(prevout);
+        if config.prevout_enabled {
+            for (prev_txid, prev_vouts) in lookups {
+                let prevtx = query.load_txn(&prev_txid, None).unwrap();
+                for (prev_out_idx, ref mut nextin) in prev_vouts {
+                    let mut prevout = TxOutValue::from(prevtx.output[prev_out_idx as usize].clone());
+                    prevout.scriptpubkey_address =
+                        script_to_address(&prevout.scriptpubkey, &config.network_type);
+                    nextin.prevout = Some(prevout);
+                }
             }
         }
     }
 
     // attach tx fee
-    for mut tx in txs.iter_mut() {
-        if tx.vin.iter().any(|vin| vin.prevout.is_none()) {
-            continue;
-        }
+    if config.prevout_enabled {
+        for mut tx in txs.iter_mut() {
+            if tx.vin.iter().any(|vin| vin.prevout.is_none()) {
+                continue;
+            }
 
-        let total_in: u64 = tx
-            .vin
-            .iter()
-            .map(|vin| vin.clone().prevout.unwrap().value)
-            .sum();
-        let total_out: u64 = tx.vout.iter().map(|vout| vout.value).sum();
-        tx.fee = Some(total_in - total_out);
+            let total_in: u64 = tx
+                .vin
+                .iter()
+                .map(|vin| vin.clone().prevout.unwrap().value)
+                .sum();
+            let total_out: u64 = tx.vout.iter().map(|vout| vout.value).sum();
+            tx.fee = Some(total_in - total_out);
+        }
     }
 }
 
