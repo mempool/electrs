@@ -28,6 +28,10 @@ pub struct Config {
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
     pub tx_cache_size: usize,
+    pub txstore_enabled: bool,
+    pub blocktxs_enabled: bool,
+    pub blockmeta_enabled: bool,
+    pub prevout_enabled: bool,
 }
 
 impl Config {
@@ -115,6 +119,26 @@ impl Config {
                     .long("tx-cache-size")
                     .help("Number of transactions to keep in for query LRU cache")
                     .default_value("10000")  // should be enough for a small wallet.
+            )
+            .arg(
+                Arg::with_name("enable_txstore")
+                    .long("enable-txstore")
+                    .help("Store full raw transactions in database")
+            )
+            .arg(
+                Arg::with_name("enable_blockmeta")
+                    .long("enable-blockmeta")
+                    .help("Store block metadata in database")
+            )
+            .arg(
+                Arg::with_name("enable_blocktxs")
+                    .long("enable-blocktxs")
+                    .help("Store blockhash to txids map in database")
+            )
+            .arg(
+                Arg::with_name("enable_prevout")
+                    .long("enable-prevout")
+                    .help("Attach previout output details to inputs")
             )
             .get_matches();
 
@@ -211,6 +235,10 @@ impl Config {
             index_batch_size: value_t_or_exit!(m, "index_batch_size", usize),
             bulk_index_threads,
             tx_cache_size: value_t_or_exit!(m, "tx_cache_size", usize),
+            txstore_enabled: m.is_present("enable_txstore"),
+            blocktxs_enabled: m.is_present("enable_blocktxs"),
+            blockmeta_enabled: m.is_present("enable_blockmeta"),
+            prevout_enabled: m.is_present("enable_prevout"),
         };
         eprintln!("{:?}", config);
         config
