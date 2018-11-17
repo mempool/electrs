@@ -198,3 +198,12 @@ pub fn is_fully_compacted(store: &ReadStore) -> bool {
     let marker = store.get(&full_compaction_marker().key);
     marker.is_some()
 }
+
+pub fn verify_index_compatibility(store: &DBStore, settings: Bytes) {
+    match store.get(b"C") {
+        None => store.write(vec![ Row { key: b"C".to_vec(), value: settings } ]),
+        Some(x) => if x != settings {
+            panic!("Incompatible database found. Updating the config options --enable-{txstore,blockmeta,blocktxs} requires a reindex.");
+        },
+    }
+}

@@ -19,7 +19,7 @@ use electrs::{
     metrics::Metrics,
     query::Query,
     signal::Waiter,
-    store::{full_compaction, is_fully_compacted, DBStore},
+    store::{full_compaction, is_fully_compacted, verify_index_compatibility, DBStore},
 };
 
 fn run_server(config: Config) -> Result<()> {
@@ -38,6 +38,9 @@ fn run_server(config: Config) -> Result<()> {
     // Perform initial indexing from local blk*.dat block files.
     let store = DBStore::open(&config.db_path, /*low_memory=*/ config.jsonrpc_import);
     let index = Index::load(&store, &daemon, &metrics, &config)?;
+
+    verify_index_compatibility(&store, config.index_settings());
+
     let store = if is_fully_compacted(&store) {
         store // initial import and full compaction are over
     } else {

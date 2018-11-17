@@ -7,8 +7,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use stderrlog;
+use bincode;
 
 use daemon::CookieGetter;
+use util::Bytes;
 
 use errors::*;
 
@@ -254,6 +256,10 @@ impl Config {
                 daemon_dir: self.daemon_dir.clone(),
             })
         }
+    }
+
+    pub fn index_settings(&self) -> Bytes {
+        bincode::serialize(&(self.network_type, self.txstore_enabled, self.blocktxs_enabled, self.blockmeta_enabled)).unwrap()
     }
 }
 
