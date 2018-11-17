@@ -449,12 +449,14 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
 
     for mut tx in txs.iter_mut() {
         // collect lookups
-        for mut vin in tx.vin.iter_mut() {
-            if !vin.is_coinbase && !vin.is_pegin {
-                lookups
-                    .entry(vin.txid)
-                    .or_insert(vec![])
-                    .push((vin.vout, vin));
+        if config.prevout_enabled {
+            for mut vin in tx.vin.iter_mut() {
+                if !vin.is_coinbase && !vin.is_pegin {
+                    lookups
+                        .entry(vin.txid)
+                        .or_insert(vec![])
+                        .push((vin.vout, vin));
+                }
             }
         }
         // attach encoded address and pegout info (should ideally happen in TxOutValue::from(),
@@ -470,13 +472,15 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
     }
 
     // fetch prevtxs and attach prevouts to nextins
-    for (prev_txid, prev_vouts) in lookups {
-        let prevtx = query.tx_get(&prev_txid).unwrap();
-        for (prev_out_idx, ref mut nextin) in prev_vouts {
-            let mut prevout = TxOutValue::from(prevtx.output[prev_out_idx as usize].clone());
-            prevout.scriptpubkey_address =
-                script_to_address(&prevout.scriptpubkey, &config.network_type);
-            nextin.prevout = Some(prevout);
+    if config.prevout_enabled {
+        for (prev_txid, prev_vouts) in lookups {
+            let prevtx = query.load_txn(&prev_txid).unwrap();
+            for (prev_out_idx, ref mut nextin) in prev_vouts {
+                let mut prevout = TxOutValue::from(prevtx.output[prev_out_idx as usize].clone());
+                prevout.scriptpubkey_address =
+                    script_to_address(&prevout.scriptpubkey, &config.network_type);
+                nextin.prevout = Some(prevout);
+            }
         }
     }
 }
@@ -598,9 +602,8 @@ fn handle_request(
                 .take(TX_LIMIT)
                 .map(|txid| {
                     query
-                        .tx_get(&txid)
+                        .load_txn(&txid)
                         .map(TransactionValue::from)
-                        .ok_or("missing tx".to_string())
                 }).collect::<Result<Vec<TransactionValue>, _>>()?;
             attach_txs_data(&mut txs, config, query);
             json_response(txs, TTL_LONG)
@@ -671,8 +674,8 @@ fn handle_request(
         (&Method::GET, Some(&"tx"), Some(hash), None, None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let transaction = query
-                .tx_get(&hash)
-                .ok_or(HttpError::not_found("Transaction not found".to_string()))?;
+                .load_txn(&hash)
+                .map_err(|_| HttpError::not_found("Transaction not found".to_string()))?;
             let status = query.get_tx_status(&hash)?;
             let ttl = ttl_by_depth(status.block_height, query);
 
@@ -684,8 +687,8 @@ fn handle_request(
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"hex"), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let rawtx = query
-                .tx_get_raw(&hash)
-                .ok_or(HttpError::not_found("Transaction not found".to_string()))?;
+                .load_raw_txn(&hash)
+                .map_err(|_| HttpError::not_found("Transaction not found".to_string()))?;
             let ttl = ttl_by_depth(query.get_tx_status(&hash)?.block_height, query);
             http_message(StatusCode::OK, hex::encode(rawtx), ttl)
         }
@@ -727,8 +730,8 @@ fn handle_request(
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspends"), None) => {
             let hash = Sha256dHash::from_hex(hash)?;
             let tx = query
-                .tx_get(&hash)
-                .ok_or(HttpError::not_found("Transaction not found".to_string()))?;
+                .load_txn(&hash)
+                .map_err(|_| HttpError::not_found("Transaction not found".to_string()))?;
             let spends: Vec<SpendingValue> = query
                 .find_spending_for_funding_tx(tx)?
                 .into_iter()

@@ -22,7 +22,7 @@ use util::HeaderList;
 
 use errors::*;
 
-#[derive(Debug, Copy, Clone, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Hash, Serialize)]
 pub enum Network {
     Bitcoin,
     Testnet,
@@ -541,6 +541,10 @@ impl Daemon {
         )?)?;
         assert_eq!(block.bitcoin_hash(), *blockhash);
         Ok(block)
+    }
+
+    pub fn getblock_raw(&self, blockhash: &Sha256dHash, verbose: u32) -> Result<Value> {
+        self.request("getblock", json!([blockhash.be_hex_string(), verbose]))
     }
 
     pub fn getblocks(&self, blockhashes: &[Sha256dHash]) -> Result<Vec<Block>> {
