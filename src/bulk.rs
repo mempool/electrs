@@ -16,6 +16,7 @@ use daemon::Daemon;
 use index::{index_block, last_indexed_block, read_indexed_blockhashes};
 use metrics::{CounterVec, Histogram, HistogramOpts, HistogramVec, MetricOpts, Metrics};
 use store::{DBStore, Row, WriteStore};
+use config::Config;
 use util::{spawn_thread, HeaderList, SyncChannel};
 
 use errors::*;
@@ -28,6 +29,7 @@ struct Parser {
     duration: HistogramVec,
     block_count: CounterVec,
     bytes_read: Histogram,
+    config: Config,
 }
 
 impl Parser {
@@ -35,11 +37,13 @@ impl Parser {
         daemon: &Daemon,
         metrics: &Metrics,
         indexed_blockhashes: HashSet<Sha256dHash>,
+        config: &Config,
     ) -> Result<Arc<Parser>> {
         Ok(Arc::new(Parser {
             magic: daemon.magic(),
             current_headers: load_headers(daemon)?,
             indexed_blockhashes: Mutex::new(indexed_blockhashes),
+            config: config.clone(), // @fixme
             duration: metrics.histogram_vec(
                 HistogramOpts::new("parse_duration", "blk*.dat parsing duration (in seconds)"),
                 &["step"],
@@ -92,7 +96,7 @@ impl Parser {
                     .expect("indexed_blockhashes")
                     .insert(blockhash.clone())
                 {
-                    rows.extend(index_block(&block, header.height() as u32));
+                    rows.extend(index_block(&block, header.height() as u32, &self.config));
                     self.block_count.with_label_values(&["indexed"]).inc();
                 } else {
                     self.block_count.with_label_values(&["duplicate"]).inc();
@@ -209,7 +213,7 @@ fn start_indexer(
 
 pub fn index_blk_files(
     daemon: &Daemon,
-    index_threads: usize,
+    config: &Config,
     metrics: &Metrics,
     store: DBStore,
 ) -> Result<DBStore> {
@@ -218,10 +222,10 @@ pub fn index_blk_files(
     info!("indexing {} blk*.dat files", blk_files.len());
     let indexed_blockhashes = read_indexed_blockhashes(&store);
     debug!("found {} indexed blocks", indexed_blockhashes.len());
-    let parser = Parser::new(daemon, metrics, indexed_blockhashes)?;
+    let parser = Parser::new(daemon, metrics, indexed_blockhashes, config)?;
     let (blobs, reader) = start_reader(blk_files, parser.clone());
     let rows_chan = SyncChannel::new(0);
-    let indexers: Vec<JoinHandle> = (0..index_threads)
+    let indexers: Vec<JoinHandle> = (0..config.bulk_index_threads)
         .map(|_| start_indexer(blobs.clone(), parser.clone(), rows_chan.sender()))
         .collect();
     Ok(spawn_thread("bulk_writer", move || -> DBStore {

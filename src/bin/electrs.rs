@@ -22,7 +22,7 @@ use electrs::{
     store::{full_compaction, is_fully_compacted, DBStore},
 };
 
-fn run_server(config: &Config) -> Result<()> {
+fn run_server(config: Config) -> Result<()> {
     let signal = Waiter::new();
     let metrics = Metrics::new(config.monitoring_addr);
     metrics.start();
@@ -37,7 +37,7 @@ fn run_server(config: &Config) -> Result<()> {
     )?;
     // Perform initial indexing from local blk*.dat block files.
     let store = DBStore::open(&config.db_path, /*low_memory=*/ config.jsonrpc_import);
-    let index = Index::load(&store, &daemon, &metrics, config.index_batch_size)?;
+    let index = Index::load(&store, &daemon, &metrics, &config)?;
     let store = if is_fully_compacted(&store) {
         store // initial import and full compaction are over
     } else {
@@ -46,14 +46,14 @@ fn run_server(config: &Config) -> Result<()> {
             full_compaction(store)
         } else {
             // faster, but uses more memory
-            let store = bulk::index_blk_files(&daemon, config.bulk_index_threads, &metrics, store)?;
+            let store = bulk::index_blk_files(&daemon, &config, &metrics, store)?;
             let store = full_compaction(store);
             index.reload(&store); // make sure the block header index is up-to-date
             store
         }
     }.enable_compaction(); // enable auto compactions before starting incremental index updates.
 
-    let app = App::new(store, index, daemon)?;
+    let app = App::new(config, store, index, daemon)?;
     let query = Query::new(app.clone(), &metrics);
 
     let mut server = None; // HTTP REST server
@@ -64,7 +64,7 @@ fn run_server(config: &Config) -> Result<()> {
         if server.is_none() {
             let info = app.daemon().getblockchaininfo()?;
             if info.initialblockdownload == false && info.verificationprogress > 0.9999 {
-                server = Some(rest::run_server(&config, query.clone()));
+                server = Some(rest::run_server(&app.config(), query.clone()));
             } else {
                 warn!("bitcoind not fully synced waiting");
             }
@@ -80,7 +80,7 @@ fn run_server(config: &Config) -> Result<()> {
 
 fn main() {
     let config = Config::from_args();
-    if let Err(e) = run_server(&config) {
+    if let Err(e) = run_server(config) {
         error!("server failed: {}", e.display_chain());
         process::exit(1);
     }

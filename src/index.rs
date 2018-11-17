@@ -19,6 +19,8 @@ use util::{
     HeaderList, HeaderMap, SyncChannel, HASH_PREFIX_LEN,
 };
 
+use config::Config;
+
 use errors::*;
 
 #[derive(Serialize, Deserialize)]
@@ -229,12 +231,12 @@ pub fn index_transaction(
     for output in &txn.output {
         rows.push(TxOutRow::new(&txid, &output).to_row());
     }
-    // Persist transaction ID and confirmed height
+    // Persist transaction ID and confirmed height/hash
     rows.push(TxRow::new(&txid, height, blockhash).to_row());
     rows.push(RawTxRow::new(&txid, serialize(txn)).to_row()); // @TODO avoid re-serialization
 }
 
-pub fn index_block(block: &Block, height: u32) -> Vec<Row> {
+pub fn index_block(block: &Block, height: u32, config: &Config) -> Vec<Row> {
     let blockhash = block.bitcoin_hash();
     let mut rows = vec![];
     for txn in &block.txdata {
@@ -380,7 +382,7 @@ pub struct Index {
     headers: RwLock<HeaderList>,
     daemon: Daemon,
     stats: Stats,
-    batch_size: usize,
+    config: Config,
 }
 
 impl Index {
@@ -388,7 +390,7 @@ impl Index {
         store: &ReadStore,
         daemon: &Daemon,
         metrics: &Metrics,
-        batch_size: usize,
+        config: &Config,
     ) -> Result<Index> {
         let stats = Stats::new(metrics);
         let headers = read_indexed_headers(store);
@@ -397,7 +399,7 @@ impl Index {
             headers: RwLock::new(headers),
             daemon: daemon.reconnect()?,
             stats,
-            batch_size,
+            config: config.clone(), // @fixme
         })
     }
 
@@ -452,7 +454,7 @@ impl Index {
         let chan = SyncChannel::new(1);
         let sender = chan.sender();
         let blockhashes: Vec<Sha256dHash> = new_headers.iter().map(|h| *h.hash()).collect();
-        let batch_size = self.batch_size;
+        let batch_size = self.config.index_batch_size;
         let fetcher = spawn_thread("fetcher", move || {
             for chunk in blockhashes.chunks(batch_size) {
                 sender
@@ -483,7 +485,7 @@ impl Index {
                     .expect(&format!("missing header for block {}", blockhash));
 
                 let timer = self.stats.start_timer("index");
-                let mut block_rows = index_block(block, height as u32);
+                let mut block_rows = index_block(block, height as u32, &self.config);
                 block_rows.push(last_indexed_block(&blockhash));
                 rows.extend(block_rows);
                 timer.observe_duration();

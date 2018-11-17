@@ -1,11 +1,12 @@
 use bitcoin::util::hash::Sha256dHash;
 use std::sync::{Arc, Mutex};
 
-use {daemon, index, signal::Waiter, store};
+use {daemon, index, signal::Waiter, store, config};
 
 use errors::*;
 
 pub struct App {
+    config: config::Config,
     store: store::DBStore,
     index: index::Index,
     daemon: daemon::Daemon,
@@ -14,11 +15,13 @@ pub struct App {
 
 impl App {
     pub fn new(
+        config: config::Config,
         store: store::DBStore,
         index: index::Index,
         daemon: daemon::Daemon,
     ) -> Result<Arc<App>> {
         Ok(Arc::new(App {
+            config,
             store,
             index,
             daemon: daemon.reconnect()?,
@@ -32,6 +35,9 @@ impl App {
     // TODO: use index for queries.
     pub fn read_store(&self) -> &store::ReadStore {
         &self.store
+    }
+    pub fn config(&self) -> &config::Config{
+        &self.config
     }
     pub fn index(&self) -> &index::Index {
         &self.index
