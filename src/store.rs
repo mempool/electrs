@@ -49,7 +49,7 @@ impl DBStore {
         db_opts.set_compression_type(rocksdb::DBCompressionType::Snappy);
         db_opts.set_target_file_size_base(256 << 20);
         db_opts.set_write_buffer_size(256 << 20);
-        db_opts.set_disable_auto_compactions(opts.bulk_import); // for initial bulk load
+        db_opts.set_disable_auto_compactions(false); // for initial bulk load
         db_opts.set_advise_random_on_open(!opts.bulk_import); // bulk load uses sequential I/O
         if opts.low_memory == false {
             db_opts.set_compaction_readahead_size(1 << 20);
@@ -90,7 +90,6 @@ impl DBStore {
 
         let store = DBStore::open_opts(opts);
         info!("starting full compaction");
-        store.db.compact_range(None, None); // would take a while
         info!("finished full compaction");
         store
     }
