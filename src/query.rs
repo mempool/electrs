@@ -221,21 +221,37 @@ impl Query {
         store: &ReadStore,
         prefixes: Vec<HashPrefix>,
     ) -> Result<Vec<TxnHeight>> {
-        let mut txns = vec![];
         let _timer = self
             .latency
             .with_label_values(&["load_txns_by_prefix"])
             .start_timer();
-        for txid_prefix in prefixes {
-            for tx_row in txrows_by_prefix(store, &txid_prefix) {
-                let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
-                let txn = self.tx_get(&txid).chain_err(|| "cannot locate tx")?;
-                txns.push(TxnHeight {
-                    txn,
-                    height: tx_row.height,
-                    blockhash: tx_row.blockhash,
-                })
-            }
+
+        // lookup full transaction ID (with confirmed height & blockhash) from DB
+        let tx_rows: Vec<TxRow> = {
+            let _timer = self
+                .latency
+                .with_label_values(&["load_txns_by_prefix-txrows_by_prefix"])
+                .start_timer();
+            prefixes
+                .into_iter()
+                .flat_map(|txid_prefix| txrows_by_prefix(store, &txid_prefix))
+                .collect()
+        };
+
+        // lookup actual transaction data from DB / bitcoind
+        let _timer = self
+            .latency
+            .with_label_values(&["load_txns_by_prefix-tx_get"])
+            .start_timer();
+        let mut txns = vec![];
+        for tx_row in tx_rows {
+            let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
+            let txn = self.tx_get(&txid).chain_err(|| "cannot locate tx")?;
+            txns.push(TxnHeight {
+                txn,
+                height: tx_row.height,
+                blockhash: tx_row.blockhash,
+            });
         }
         Ok(txns)
     }
@@ -249,10 +265,22 @@ impl Query {
             .latency
             .with_label_values(&["find_spending_input"])
             .start_timer();
-        let spending_txns: Vec<TxnHeight> = self.load_txns_by_prefix(
-            store,
-            txids_by_funding_output(store, &funding.txn_id, funding.output_index),
-        )?;
+
+        let txid_prefixes = {
+            let _timer = self
+                .latency
+                .with_label_values(&["find_spending_input-txids_by_funding_output"])
+                .start_timer();
+            txids_by_funding_output(store, &funding.txn_id, funding.output_index)
+        };
+
+        let spending_txns: Vec<TxnHeight> = {
+            let _timer = self
+                .latency
+                .with_label_values(&["find_spending_input-load_txns_by_prefix"])
+                .start_timer();
+            self.load_txns_by_prefix(store, txid_prefixes)
+        }?;
         let mut spending_inputs = vec![];
         for t in &spending_txns {
             for (input_index, input) in t.txn.input.iter().enumerate() {
@@ -307,57 +335,32 @@ impl Query {
             .latency
             .with_label_values(&["confirmed_status"])
             .start_timer();
-        trace!("confirmed_status: start");
+        info!("confirmed_status: start");
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
         let txid_prefixes = txids_by_script_hash(read_store, script_hash);
-        trace!("confirmed_status: {} prefixes", txid_prefixes.len());
+        info!("confirmed_status: {} prefixes", txid_prefixes.len());
         for t in self.load_txns_by_prefix(read_store, txid_prefixes)? {
             funding.extend(self.find_funding_outputs(&t, script_hash));
         }
-        trace!("confirmed_status: {} funding txs", funding.len());
+        info!("confirmed_status: {} funding outputs", funding.len());
         for funding_output in &funding {
             if let Some(spent) = self.find_spending_input(read_store, &funding_output)? {
                 spending.push(spent);
             }
         }
-        trace!("confirmed_status: {} spending txs", spending.len());
-        Ok((funding, spending))
-    }
-
-    fn mempool_status(
-        &self,
-        script_hash: &[u8],
-        confirmed_funding: &[FundingOutput],
-    ) -> Result<(Vec<FundingOutput>, Vec<SpendingInput>)> {
-        let _timer = self
-            .latency
-            .with_label_values(&["mempool_status"])
-            .start_timer();
-        let mut funding = vec![];
-        let mut spending = vec![];
-        let tracker = self.tracker.read().unwrap();
-        let txid_prefixes = txids_by_script_hash(tracker.index(), script_hash);
-        for t in self.load_txns_by_prefix(tracker.index(), txid_prefixes)? {
-            funding.extend(self.find_funding_outputs(&t, script_hash));
-        }
-        // // TODO: dedup outputs (somehow) both confirmed and in mempool (e.g. reorg?)
-        for funding_output in funding.iter().chain(confirmed_funding.iter()) {
-            if let Some(spent) = self.find_spending_input(tracker.index(), &funding_output)? {
-                spending.push(spent);
-            }
-        }
+        info!("confirmed_status: {} spending inputs", spending.len());
         Ok((funding, spending))
     }
 
     pub fn status(&self, script_hash: &[u8]) -> Result<Status> {
         let _timer = self.latency.with_label_values(&["status"]).start_timer();
         let confirmed = self.confirmed_status(script_hash)?;
-        //.chain_err(|| "failed to get confirmed status")?;
-        let mempool = self.mempool_status(script_hash, &confirmed.0)?;
-        //.chain_err(|| "failed to get mempool status")?;
-        Ok(Status { confirmed, mempool })
+        Ok(Status {
+            confirmed,
+            mempool: (vec![], vec![]),
+        })
     }
 
     pub fn find_spending_by_outpoint(&self, outpoint: OutPoint) -> Result<Option<SpendingInput>> {
