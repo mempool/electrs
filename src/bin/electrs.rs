@@ -64,7 +64,7 @@ fn run_server(config: &Config) -> Result<()> {
         if server.is_none() {
             let info = app.daemon().getblockchaininfo()?;
             if info.initialblockdownload == false && info.verificationprogress > 0.9999 {
-                server = Some(rest::run_server(&config, query.clone()));
+                server = Some(rest::run_server(&config, query.clone(), &metrics));
             } else {
                 warn!("bitcoind not fully synced waiting");
             }

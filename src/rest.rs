@@ -12,6 +12,7 @@ use hyper::service::service_fn_ok;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use index::compute_script_hash;
 use mempool::MEMPOOL_HEIGHT;
+use metrics::{HistogramOpts, MetricOpts, Metrics};
 use query::{FundingOutput, Query, SpendingInput, TxnHeight};
 use serde::Serialize;
 use serde_json;
@@ -360,18 +361,34 @@ fn attach_txs_data(txs: &mut Vec<TransactionValue>, config: &Config, query: &Arc
     }
 }
 
-pub fn run_server(config: &Config, query: Arc<Query>) {
+pub fn run_server(config: &Config, query: Arc<Query>, metrics: &Metrics) {
     let addr = &config.http_addr;
     info!("REST server running on {}", addr);
 
     let config = Arc::new(config.clone());
+    let latency_histogram = metrics.histogram(
+        HistogramOpts::new(
+            "rest_handler_latency",
+            "REST API handler latency (in seconds)",
+        ).buckets(Metrics::default_latency_buckets()),
+    );
+    let response_counter = metrics.counter_vec(
+        MetricOpts::new(
+            "rest_handler_response",
+            "REST API handler latency (in seconds)",
+        ),
+        &["method", "code"],
+    );
 
     let new_service = move || {
         let query = query.clone();
         let config = config.clone();
+        let latency_histogram = latency_histogram.clone();
+        let response_counter = response_counter.clone();
 
-        service_fn_ok(
-            move |req: Request<Body>| match handle_request(req, &query, &config) {
+        service_fn_ok(move |req: Request<Body>| {
+            let _timer = latency_histogram.start_timer();
+            let response = match handle_request(&req, &query, &config) {
                 Ok(response) => response,
                 Err(e) => {
                     warn!("{:?}", e);
@@ -381,8 +398,12 @@ pub fn run_server(config: &Config, query: Arc<Query>) {
                         .body(Body::from(e.1))
                         .unwrap()
                 }
-            },
-        )
+            };
+            response_counter
+                .with_label_values(&[req.method().as_str(), response.status().as_str()])
+                .inc();
+            response
+        })
     };
 
     let server = Server::bind(&addr)
@@ -395,7 +416,7 @@ pub fn run_server(config: &Config, query: Arc<Query>) {
 }
 
 fn handle_request(
-    req: Request<Body>,
+    req: &Request<Body>,
     query: &Arc<Query>,
     config: &Config,
 ) -> Result<Response<Body>, HttpError> {
