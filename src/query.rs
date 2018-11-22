@@ -3,6 +3,7 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::util::hash::Sha256dHash;
+use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
@@ -233,7 +234,7 @@ impl Query {
                 .with_label_values(&["load_txns_by_prefix-txrows_by_prefix"])
                 .start_timer();
             prefixes
-                .into_iter()
+                .par_iter()
                 .flat_map(|txid_prefix| txrows_by_prefix(store, &txid_prefix))
                 .collect()
         };
@@ -243,16 +244,17 @@ impl Query {
             .latency
             .with_label_values(&["load_txns_by_prefix-tx_get"])
             .start_timer();
-        let mut txns = vec![];
-        for tx_row in tx_rows {
-            let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
-            let txn = self.tx_get(&txid).chain_err(|| "cannot locate tx")?;
-            txns.push(TxnHeight {
-                txn,
-                height: tx_row.height,
-                blockhash: tx_row.blockhash,
-            });
-        }
+        let txns = tx_rows
+            .par_iter()
+            .map(|tx_row| {
+                let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
+                let txn = self.tx_get(&txid).expect("cannot locate tx");
+                TxnHeight {
+                    txn,
+                    height: tx_row.height,
+                    blockhash: tx_row.blockhash,
+                }
+            }).collect();
         Ok(txns)
     }
 
