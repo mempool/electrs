@@ -139,7 +139,7 @@ impl Config {
             Network::Testnet => 18332,
             Network::Regtest => 18443,
             Network::Liquid => 10099,
-            Network::LiquidV1 => 10199,
+            Network::LiquidV1 => 7041,
             Network::LiquidRegtest => 7041,
         };
         let default_electrum_port = match network_type {
