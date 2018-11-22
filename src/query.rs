@@ -307,18 +307,22 @@ impl Query {
             .latency
             .with_label_values(&["confirmed_status"])
             .start_timer();
+        trace!("confirmed_status: start");
         let mut funding = vec![];
         let mut spending = vec![];
         let read_store = self.app.read_store();
         let txid_prefixes = txids_by_script_hash(read_store, script_hash);
+        trace!("confirmed_status: {} prefixes", txid_prefixes.len());
         for t in self.load_txns_by_prefix(read_store, txid_prefixes)? {
             funding.extend(self.find_funding_outputs(&t, script_hash));
         }
+        trace!("confirmed_status: {} funding txs", funding.len());
         for funding_output in &funding {
             if let Some(spent) = self.find_spending_input(read_store, &funding_output)? {
                 spending.push(spent);
             }
         }
+        trace!("confirmed_status: {} spending txs", spending.len());
         Ok((funding, spending))
     }
 
