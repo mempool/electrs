@@ -27,7 +27,6 @@ pub struct Config {
     pub jsonrpc_import: bool,
     pub index_batch_size: usize,
     pub bulk_index_threads: usize,
-    pub tx_cache_size: usize,
 }
 
 impl Config {
@@ -109,12 +108,6 @@ impl Config {
                     .long("bulk-index-threads")
                     .help("Number of threads used for bulk indexing (default: use the # of CPUs)")
                     .default_value("0")
-            )
-            .arg(
-                Arg::with_name("tx_cache_size")
-                    .long("tx-cache-size")
-                    .help("Number of transactions to keep in for query LRU cache")
-                    .default_value("10000")  // should be enough for a small wallet.
             )
             .get_matches();
 
@@ -210,7 +203,6 @@ impl Config {
             jsonrpc_import: m.is_present("jsonrpc_import"),
             index_batch_size: value_t_or_exit!(m, "index_batch_size", usize),
             bulk_index_threads,
-            tx_cache_size: value_t_or_exit!(m, "tx_cache_size", usize),
         };
         eprintln!("{:?}", config);
         config
