@@ -66,6 +66,13 @@ impl Metrics {
         h
     }
 
+    pub fn default_latency_buckets() -> Vec<f64> {
+        vec![
+            1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 0.1, 0.2, 0.5, 1., 2., 5., 10.,
+            20., 50., 100.,
+        ]
+    }
+
     pub fn start(&self) {
         let server = tiny_http::Server::http(self.addr).expect(&format!(
             "failed to start monitoring HTTP server at {}",

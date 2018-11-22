@@ -205,16 +205,12 @@ pub struct Query {
 
 impl Query {
     pub fn new(app: Arc<App>, metrics: &Metrics) -> Arc<Query> {
-        let latency_buckets = vec![
-            1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 5e-2, 0.1, 0.2, 0.5, 1., 2., 5., 10.,
-            20., 50., 100.,
-        ];
         Arc::new(Query {
             app,
             tracker: RwLock::new(Tracker::new(metrics)),
             latency: metrics.histogram_vec(
                 HistogramOpts::new("query_latency", "Query latency (in seconds)")
-                    .buckets(latency_buckets),
+                    .buckets(Metrics::default_latency_buckets()),
                 &["type"],
             ),
         })
