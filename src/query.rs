@@ -238,9 +238,7 @@ impl Query {
         for txid_prefix in prefixes {
             for tx_row in txrows_by_prefix(store, &txid_prefix) {
                 let txid: Sha256dHash = deserialize(&tx_row.key.txid).unwrap();
-                let txn = self
-                    .load_txn(&txid)
-                    .chain_err(|| "cannot locate tx")?;
+                let txn = self.load_txn(&txid).chain_err(|| "cannot locate tx")?;
                 txns.push(TxnHeight {
                     txn,
                     height: tx_row.height,
@@ -420,10 +418,7 @@ impl Query {
     }
 
     // Load transaction by txid
-    pub fn load_txn(
-        &self,
-        txid: &Sha256dHash,
-    ) -> Result<Transaction> {
+    pub fn load_txn(&self, txid: &Sha256dHash) -> Result<Transaction> {
         let _timer = self.latency.with_label_values(&["load_txn"]).start_timer();
         if self.extended_db_enabled {
             // fetch from our txstore or mempool tracker
@@ -438,10 +433,7 @@ impl Query {
     }
 
     // Load raw transaction by txid
-    pub fn load_raw_txn(
-        &self,
-        txid: &Sha256dHash,
-    ) -> Result<Bytes> {
+    pub fn load_raw_txn(&self, txid: &Sha256dHash) -> Result<Bytes> {
         let _timer = self
             .latency
             .with_label_values(&["load_raw_txn"])
@@ -459,10 +451,7 @@ impl Query {
                 }).chain_err(|| format!("cannot find tx {}", txid))?)
         } else {
             // fetch from bitcoind
-            let tx_val = self
-                .app
-                .daemon()
-                .gettransaction_raw(txid, false)?;
+            let tx_val = self.app.daemon().gettransaction_raw(txid, false)?;
             Ok(
                 ::hex::decode(tx_val.as_str().chain_err(|| "non-string tx hex")?)
                     .chain_err(|| "invalid hex")?,

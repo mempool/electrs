@@ -600,11 +600,8 @@ fn handle_request(
                 .iter()
                 .skip(start_index)
                 .take(TX_LIMIT)
-                .map(|txid| {
-                    query
-                        .load_txn(&txid)
-                        .map(TransactionValue::from)
-                }).collect::<Result<Vec<TransactionValue>, _>>()?;
+                .map(|txid| query.load_txn(&txid).map(TransactionValue::from))
+                .collect::<Result<Vec<TransactionValue>, _>>()?;
             attach_txs_data(&mut txs, config, query);
             json_response(txs, TTL_LONG)
         }
