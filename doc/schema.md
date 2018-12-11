@@ -33,23 +33,34 @@ Note that this mapping allows us to use `getrawtransaction` RPC to retrieve actu
 
 # New Schema (for efficient history paging)
 
-The indexing will be done in the two phases (each can be done concurrently within itself):
+The indexing is done in the two phases (each can be done concurrently within itself):
 
 ## 1st phase
 
-Each transaction will be indexed by its id, resulting in a new row (`T` is for transaction):
+Each block results in the following new rows:
 
- * `"T{txnid}" → "{confirmed-height}{confirmed-blockhash}{serialized-transaction}"`
+ * `"B{blockhash}" → "{header}"`
+ * `"X{blockhash}" → "{txids}"`
+ * `"M{blockhash}" → "{metadata}"` (TODO)
+
+Each transaction results in the following new rows:
+
+ * `"T{txnid}" → "{serialized-transaction}"`
+ * `"C{txnid}{confirmed-height}{confirmed-blockhash}" → ""`
+
+Each output results in the following new row:
+
+ * `"O{txid}{vout}" → "{scriptpubkey}{value}"`
 
 ## 2nd phase
 
-Each funding output should result in a new row (`H` is for history, `F` is for funding):
+Each funding output results in the following new row (`H` is for history, `F` is for funding):
 
  * `"H{funding-scripthash}{funding-height}F{funding-txid:index}" → ""`
 
-Each spending input (except the coinbase) should result in two new rows (`S` is for spending):
+Each spending input (except the coinbase) results in the following new rows (`S` is for spending):
 
- * `"H{funding-scripthash}{spending-height}S{spending-txid:index}" → "{funding-txid:index}"`
+ * `"H{funding-scripthash}{spending-height}S{spending-txid:index}{funding-txid:index}" → ""`
  * `"S{funding-txid:index}{spending-txid:index}" → ""`
 
 NOTE: in order to construct the rows for spending inputs, we rely on having the transactions being processed at phase #1, so they can be looked up efficiently (using parallel point lookups).
