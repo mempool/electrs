@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 // use metrics::{Counter, Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics};
 // use signal::Waiter;
@@ -97,17 +98,17 @@ impl<'a> Indexer<'a> {
             headers.order(daemon.get_new_headers(&headers, &tip)?)
         };
 
-        info!("adding transactions from {} blocks", new_headers.len());
-        start_fetcher(from, &daemon, &new_headers)?.map(|blocks| self.add(&blocks));
+        // info!("adding transactions from {} blocks", new_headers.len());
+        // start_fetcher(from, &daemon, &new_headers)?.map(|blocks| self.add(&blocks));
 
-        info!("compacting txns DB");
-        self.store.txstore_db.compact_all();
+        // info!("compacting txns DB");
+        // self.store.txstore_db.compact_all();
 
         info!("indexing history from {} blocks", new_headers.len());
         start_fetcher(from, &daemon, &new_headers)?.map(|blocks| self.index(&blocks));
 
-        info!("compacting history DB");
-        self.store.history_db.compact_all();
+        // info!("compacting history DB");
+        // self.store.history_db.compact_all();
 
         let mut headers = self.indexed_headers.write().unwrap();
         headers.apply(new_headers);
@@ -133,19 +134,22 @@ impl<'a> Indexer<'a> {
 
     fn index(&mut self, blocks: &[BlockEntry]) {
         debug!("looking up TXOs from {} blocks", blocks.len());
+        let t = Instant::now();
         let previous_txos_map = lookup_txos(&self.store.txstore_db, &get_previous_txos(blocks));
-        debug!("looked up {} TXOs", previous_txos_map.len());
-        for b in blocks {
-            let blockhash = b.entry.hash();
-            // TODO: replace by lookup into txstore_db?
-            if !self.added_blockhashes.contains(&blockhash) {
-                panic!("cannot index block {} (missing from store)", blockhash);
-            }
-        }
-        let rows = index_blocks(blocks, &previous_txos_map);
-        debug!("indexed {} history rows", rows.len());
-        self.store.history_db.write(rows);
-        debug!("written to DB");
+        let dt = t.elapsed();
+        let dt_per_tx = t.elapsed() / previous_txos_map.len() as u32;
+        debug!("looked up {} TXOs @ {:?} = {:?} per TXO", previous_txos_map.len(), dt, dt_per_tx);
+        // for b in blocks {
+        //     let blockhash = b.entry.hash();
+        //     // TODO: replace by lookup into txstore_db?
+        //     if !self.added_blockhashes.contains(&blockhash) {
+        //         panic!("cannot index block {} (missing from store)", blockhash);
+        //     }
+        // }
+        // let rows = index_blocks(blocks, &previous_txos_map);
+        // debug!("indexed {} history rows", rows.len());
+        // self.store.history_db.write(rows);
+        // debug!("written to DB");
     }
 }
 
@@ -389,7 +393,7 @@ fn get_previous_txos(block_entries: &[BlockEntry]) -> BTreeSet<OutPoint> {
 
 fn lookup_txos(txstore_db: &DB, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(16) // we need to saturate SSD IOPS
+        .num_threads(32) // we need to saturate SSD IOPS
         .thread_name(|i| format!("lookup-txo-{}", i))
         .build()
         .unwrap();
