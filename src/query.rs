@@ -448,7 +448,8 @@ impl Query {
                         .unwrap()
                         .get_txn(&txid)
                         .map(|tx| serialize(&tx))
-                }).chain_err(|| format!("cannot find tx {}", txid))?)
+                })
+                .chain_err(|| format!("cannot find tx {}", txid))?)
         } else {
             // fetch from bitcoind
             let tx_val = self.app.daemon().gettransaction_raw(txid, false)?;
@@ -511,7 +512,8 @@ impl Query {
                 .map(|txid| {
                     Sha256dHash::from_hex(txid.as_str().chain_err(|| "txid not string")?)
                         .chain_err(|| "invalid hex")
-                }).collect::<Result<Vec<Sha256dHash>>>()?)
+                })
+                .collect::<Result<Vec<Sha256dHash>>>()?)
         }
     }
 

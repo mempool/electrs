@@ -94,7 +94,8 @@ fn parse_hash(value: &Value) -> Result<Sha256dHash> {
         value
             .as_str()
             .chain_err(|| format!("non-string value: {}", value))?,
-    ).chain_err(|| format!("non-hex value: {}", value))?)
+    )
+    .chain_err(|| format!("non-hex value: {}", value))?)
 }
 
 fn header_from_value(value: Value) -> Result<BlockHeader> {
@@ -274,7 +275,8 @@ impl Connection {
             .next()
             .chain_err(|| {
                 ErrorKind::Connection("disconnected from daemon while receiving".to_owned())
-            })?.chain_err(|| "failed to read status")?;
+            })?
+            .chain_err(|| "failed to read status")?;
         let mut headers = HashMap::new();
         for line in iter {
             let line = line.chain_err(|| ErrorKind::Connection("failed to read".to_owned()))?;

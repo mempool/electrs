@@ -21,7 +21,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use util::{
-    get_script_asm, script_to_address, full_hash, BlockHeaderMeta, FullHash, PegOutRequest, TransactionStatus,
+    full_hash, get_script_asm, script_to_address, BlockHeaderMeta, FullHash, PegOutRequest,
+    TransactionStatus,
 };
 use utils::address::Address;
 
@@ -605,8 +606,8 @@ fn handle_request(
             attach_txs_data(&mut txs, config, query);
             json_response(txs, TTL_LONG)
         }
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None) |
-        (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None) => {
+        (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None)
+        | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None) => {
             // @TODO create new AddressStatsValue struct?
             let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
             match query.status(&script_hash[..]) {
@@ -628,8 +629,20 @@ fn handle_request(
                 Err(err) => bail!(err),
             }
         }
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), Some(&"txs"), start_index) |
-        (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), Some(&"txs"), start_index) => {
+        (
+            &Method::GET,
+            Some(script_type @ &"address"),
+            Some(script_str),
+            Some(&"txs"),
+            start_index,
+        )
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"txs"),
+            start_index,
+        ) => {
             let start_index = start_index
                 .map_or(0u32, |el| el.parse().unwrap_or(0))
                 .max(0u32) as usize;
@@ -659,8 +672,14 @@ fn handle_request(
 
             json_response(txs, TTL_SHORT)
         }
-        (&Method::GET, Some(script_type @ &"address"), Some(script_str), Some(&"utxo"), None) |
-        (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), Some(&"utxo"), None) => {
+        (&Method::GET, Some(script_type @ &"address"), Some(script_str), Some(&"utxo"), None)
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"utxo"),
+            None,
+        ) => {
             let script_hash = to_scripthash(script_type, script_str, &config.network_type)?;
             let status = query.status(&script_hash[..])?;
             let utxos: Vec<UtxoValue> = status
@@ -740,7 +759,8 @@ fn handle_request(
                         || SpendingValue::default(),
                         |spend| SpendingValue::from(spend),
                     )
-                }).collect();
+                })
+                .collect();
             // @TODO long ttl if all outputs are either spent long ago or unspendable
             json_response(spends, TTL_SHORT)
         }
@@ -800,11 +820,15 @@ fn blocks(query: &Arc<Query>, start_height: Option<usize>) -> Result<Response<Bo
     json_response(values, TTL_SHORT)
 }
 
-fn to_scripthash(script_type: &str, script_str: &str, network: &Network) -> Result<FullHash, HttpError> {
+fn to_scripthash(
+    script_type: &str,
+    script_str: &str,
+    network: &Network,
+) -> Result<FullHash, HttpError> {
     match script_type {
         "address" => address_to_scripthash(script_str, network),
         "scripthash" => Ok(full_hash(&hex::decode(script_str)?)),
-        _ => bail!("Invalid script type".to_string())
+        _ => bail!("Invalid script type".to_string()),
     }
 }
 

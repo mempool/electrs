@@ -106,7 +106,8 @@ impl Address {
                     u5::try_from_u8(0).expect("0<32"),
                     Hash160::from_data(&pk.serialize()[..])[..].to_vec(),
                     Address::bech_network(network),
-                ).unwrap(),
+                )
+                .unwrap(),
             ),
         }
     }
@@ -141,7 +142,8 @@ impl Address {
                     u5::try_from_u8(0).expect("0<32"),
                     d.to_vec(),
                     Address::bech_network(network),
-                ).unwrap(),
+                )
+                .unwrap(),
             ),
         }
     }
@@ -200,7 +202,8 @@ impl Address {
             Payload::WitnessProgram(ref witprog) => script::Builder::new()
                 .push_int(witprog.version().to_u8() as i64)
                 .push_slice(witprog.program()),
-        }.into_script()
+        }
+        .into_script()
     }
 }
 
