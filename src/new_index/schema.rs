@@ -476,6 +476,10 @@ impl ChainQuery {
         limit: usize,
     ) -> Vec<(Transaction, BlockId)> {
         let _timer_scan = self.start_timer("history");
+        let last_seen_txid = address_paginator.and_then(|ap| match ap {
+            AddressPaginator::Txid(txid) => Some(txid),
+            _ => None,
+        });
         let txs_conf = self
             .history_iter_scan_reverse(code, hash)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
@@ -484,10 +488,7 @@ impl ChainQuery {
             // TODO seek directly to last seen tx without reading earlier rows
             .skip_while(|txid| {
                 // skip until we reach the last_seen_txid
-                address_paginator.map_or(false, |address_paginator| match address_paginator {
-                    AddressPaginator::Txid(last_txid) => last_txid != txid,
-                    AddressPaginator::Skip(_) => false,
-                })
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
             })
             .skip(match address_paginator {
                 Some(AddressPaginator::Skip(skip)) => *skip,
