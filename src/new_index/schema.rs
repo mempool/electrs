@@ -19,9 +19,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use crate::chain::{
+use crate::{chain::{
     BlockHash, BlockHeader, Network, OutPoint, Script, Transaction, TxOut, Txid, Value,
-};
+}, rest::AddressPaginator};
 use crate::config::Config;
 use crate::daemon::Daemon;
 use crate::errors::*;
@@ -461,18 +461,18 @@ impl ChainQuery {
     pub fn history(
         &self,
         scripthash: &[u8],
-        last_seen_txid: Option<&Txid>,
+        address_paginator: Option<&AddressPaginator>,
         limit: usize,
     ) -> Vec<(Transaction, BlockId)> {
         // scripthash lookup
-        self._history(b'H', scripthash, last_seen_txid, limit)
+        self._history(b'H', scripthash, address_paginator, limit)
     }
 
     fn _history(
         &self,
         code: u8,
         hash: &[u8],
-        last_seen_txid: Option<&Txid>,
+        address_paginator: Option<&AddressPaginator>,
         limit: usize,
     ) -> Vec<(Transaction, BlockId)> {
         let _timer_scan = self.start_timer("history");
@@ -484,10 +484,14 @@ impl ChainQuery {
             // TODO seek directly to last seen tx without reading earlier rows
             .skip_while(|txid| {
                 // skip until we reach the last_seen_txid
-                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+                address_paginator.map_or(false, |address_paginator| match address_paginator {
+                    AddressPaginator::Txid(last_txid) => last_txid != txid,
+                    AddressPaginator::Skip(_) => false,
+                })
             })
-            .skip(match last_seen_txid {
-                Some(_) => 1, // skip the last_seen_txid itself
+            .skip(match address_paginator {
+                Some(AddressPaginator::Skip(skip)) => *skip,
+                Some(AddressPaginator::Txid(_)) => 1, // skip the last_seen_txid itself
                 None => 0,
             })
             .filter_map(|txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))

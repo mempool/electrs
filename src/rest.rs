@@ -602,6 +602,30 @@ pub fn start(config: Arc<Config>, query: Arc<Query>) -> Handle {
     }
 }
 
+/// This enum is used to discern between a txid or a usize that is used
+/// for pagination on the /api/address|scripthash/:address/txs/chain
+/// endpoint.
+pub enum AddressPaginator {
+    Txid(Txid),
+    Skip(usize),
+}
+
+impl FromStr for AddressPaginator {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Txid::from_hex(s)
+            .ok()
+            .and_then(|txid| Some(Self::Txid(txid)))
+            .or_else(|| {
+                s.parse::<usize>()
+                    .ok()
+                    .and_then(|skip| Some(Self::Skip(skip)))
+            })
+            .ok_or("Invalid AddressPaginator".to_string())
+    }
+}
+
 pub struct Handle {
     tx: oneshot::Sender<()>,
     thread: thread::JoinHandle<()>,
@@ -821,7 +845,7 @@ fn handle_request(
             Some(script_str),
             Some(&"txs"),
             Some(&"chain"),
-            last_seen_txid,
+            address_paginator,
         )
         | (
             &Method::GET,
@@ -829,16 +853,16 @@ fn handle_request(
             Some(script_str),
             Some(&"txs"),
             Some(&"chain"),
-            last_seen_txid,
+            address_paginator,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let address_paginator = address_paginator.and_then(|ap| ap.parse::<AddressPaginator>().ok());
 
             let txs = query
                 .chain()
                 .history(
                     &script_hash[..],
-                    last_seen_txid.as_ref(),
+                    address_paginator.as_ref(),
                     CHAIN_TXS_PER_PAGE,
                 )
                 .into_iter()
