@@ -620,6 +620,7 @@ impl FromStr for AddressPaginator {
             .or_else(|| {
                 s.parse::<usize>()
                     .ok()
+                    .filter(|&skip| skip != 0) // Don't allow 0 for Skip
                     .and_then(|skip| Some(Self::Skip(skip)))
             })
             .ok_or("Invalid AddressPaginator".to_string())
