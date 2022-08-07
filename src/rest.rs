@@ -615,16 +615,22 @@ impl FromStr for AddressPaginator {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Txid::from_hex(s)
-            .ok()
-            .and_then(|txid| Some(Self::Txid(txid)))
-            .or_else(|| {
-                s.parse::<usize>()
-                    .ok()
-                    .filter(|&skip| skip != 0) // Don't allow 0 for Skip
-                    .and_then(|skip| Some(Self::Skip(skip)))
-            })
-            .ok_or("Invalid AddressPaginator".to_string())
+        // 1) Deal with Options in if else statement
+        //    to utilize filter for usize.
+        // 2) 64 length usize doesn't exist,
+        //    and from_hex is expensive.
+        if s.len() == 64 {
+            Txid::from_hex(s)
+                .ok()
+                .and_then(|txid| Some(Self::Txid(txid)))
+        } else {
+            s.parse::<usize>()
+                .ok()
+                .filter(|&skip| skip != 0) // Don't allow 0 for Skip
+                .and_then(|skip| Some(Self::Skip(skip)))
+        }
+        // 3) Convert the return value of the if else statement into a Result.
+        .ok_or("Invalid AddressPaginator".to_string())
     }
 }
 
