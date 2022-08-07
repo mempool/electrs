@@ -605,6 +605,7 @@ pub fn start(config: Arc<Config>, query: Arc<Query>) -> Handle {
 /// This enum is used to discern between a txid or a usize that is used
 /// for pagination on the /api/address|scripthash/:address/txs/chain
 /// endpoint.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum AddressPaginator {
     Txid(Txid),
     Skip(usize),
@@ -1401,7 +1402,8 @@ impl From<address::AddressError> for HttpError {
 
 #[cfg(test)]
 mod tests {
-    use crate::rest::HttpError;
+    use crate::rest::{AddressPaginator, HttpError};
+    use bitcoin::{Txid, hashes::hex::FromHex};
     use serde_json::Value;
     use std::collections::HashMap;
 
@@ -1465,5 +1467,68 @@ mod tests {
             .ok_or(HttpError::from("notexist absent or not a u64".to_string()));
 
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_address_paginator() {
+        // Each vector is (result, expected, assert_reason)
+        let vectors = [
+            (
+                "".parse::<AddressPaginator>(),
+                Err("Invalid AddressPaginator".to_string()),
+                "fails both Txid from_hex and usize parse",
+            ),
+            (
+                "0".parse::<AddressPaginator>(),
+                Err("Invalid AddressPaginator".to_string()),
+                "skipping 0 is pointless, so fails",
+            ),
+            (
+                "18446744073709551615".parse::<AddressPaginator>(),
+                Ok(AddressPaginator::Skip(18446744073709551615)),
+                "valid usize (u64::MAX)",
+            ),
+            (
+                "1".parse::<AddressPaginator>(),
+                Ok(AddressPaginator::Skip(1)),
+                "valid usize",
+            ),
+            (
+                "0000000000000000000000000000000000000000000000000000000000000001"
+                    .parse::<AddressPaginator>(),
+                Ok(AddressPaginator::Txid(
+                    Txid::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                        .unwrap(),
+                )),
+                "64 length is always treated as Txid",
+            ),
+            (
+                "0000000000000000000000000000000000000000000018446744073709551615"
+                    .parse::<AddressPaginator>(),
+                Ok(AddressPaginator::Txid(
+                    Txid::from_hex("0000000000000000000000000000000000000000000018446744073709551615")
+                        .unwrap(),
+                )),
+                "64 length is always treated as Txid",
+            ),
+            (
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    .parse::<AddressPaginator>(),
+                Ok(AddressPaginator::Txid(
+                    Txid::from_hex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+                        .unwrap(),
+                )),
+                "valid Txid",
+            ),
+            (
+                "ffffffxfffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    .parse::<AddressPaginator>(),
+                Err("Invalid AddressPaginator".to_string()),
+                "fails both Txid from_hex and usize parse",
+            ),
+        ];
+        for vector in vectors {
+            assert_eq!(vector.0, vector.1, "{}", vector.2);
+        }
     }
 }
