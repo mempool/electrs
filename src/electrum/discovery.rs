@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{hash_map::Entry, BinaryHeap, HashMap, HashSet};
+use std::convert::TryInto;
 use std::fmt;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
@@ -7,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bitcoin::BlockHash;
+use electrum_client::ElectrumApi;
 
 use crate::chain::Network;
 use crate::electrum::{Client, Hostname, Port, ProtocolVersion, ServerFeatures};
@@ -31,9 +32,6 @@ pub struct DiscoveryManager {
 
     /// A list of servers that were found to be healthy on their last health check
     healthy: RwLock<HashMap<ServerAddr, Server>>,
-
-    /// Used to test for network compatibility
-    our_genesis_hash: BlockHash,
 
     /// Used to test for protocol version compatibility
     our_version: ProtocolVersion,
@@ -110,7 +108,6 @@ impl DiscoveryManager {
             })
             .collect();
         let discovery = Self {
-            our_genesis_hash: our_network.genesis_hash(),
             our_addrs,
             our_version,
             our_features,
@@ -322,19 +319,29 @@ impl DiscoveryManager {
     ) -> Result<ServerFeatures> {
         debug!("checking service {:?} {:?}", addr, service);
 
-        let mut client: Client = match (addr, service) {
-            (ServerAddr::Clearnet(ip), Service::Tcp(port)) => Client::new((*ip, port))?,
-            (ServerAddr::Clearnet(_), Service::Ssl(port)) => Client::new_ssl((hostname, port))?,
-            (ServerAddr::Onion(hostname), Service::Tcp(port)) => {
-                let tor_proxy = self
-                    .tor_proxy
-                    .chain_err(|| "no tor proxy configured, onion hosts are unsupported")?;
-                Client::new_proxy((hostname, port), tor_proxy)?
+        let server_url = match (addr, service) {
+            (ServerAddr::Clearnet(ip), Service::Tcp(port)) => format!("tcp://{}:{}", ip, port),
+            (ServerAddr::Clearnet(_), Service::Ssl(port)) => format!("ssl://{}:{}", hostname, port),
+            (ServerAddr::Onion(onion_host), Service::Tcp(port)) => {
+                format!("tcp://{}:{}", onion_host, port)
             }
-            (ServerAddr::Onion(_), Service::Ssl(_)) => bail!("ssl over onion is unsupported"),
+            (ServerAddr::Onion(onion_host), Service::Ssl(port)) => {
+                format!("ssl://{}:{}", onion_host, port)
+            }
         };
 
-        let features = client.server_features()?;
+        let mut config = electrum_client::ConfigBuilder::new();
+        if let ServerAddr::Onion(_) = addr {
+            let socks = electrum_client::Socks5Config::new(
+                self.tor_proxy
+                    .chain_err(|| "no tor proxy configured, onion hosts are unsupported")?,
+            );
+            config = config.socks5(Some(socks)).unwrap()
+        }
+
+        let client = Client::from_config(&server_url, config.build())?;
+
+        let features = client.server_features()?.try_into()?;
         self.verify_compatibility(&features)?;
 
         if self.announce {
@@ -350,7 +357,7 @@ impl DiscoveryManager {
 
     fn verify_compatibility(&self, features: &ServerFeatures) -> Result<()> {
         ensure!(
-            features.genesis_hash == self.our_genesis_hash,
+            features.genesis_hash == self.our_features.genesis_hash,
             "incompatible networks"
         );
 
@@ -514,36 +521,49 @@ fn is_remote_addr(addr: &ServerAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::genesis_hash;
     use crate::chain::Network;
     use std::time;
+
+    const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(1, 4);
 
     #[test]
     fn test() -> Result<()> {
         stderrlog::new().verbosity(4).init().unwrap();
 
-        let discovery = DiscoveryManager::new(
+        let features = ServerFeatures {
+            hosts: serde_json::from_str("{\"test.foobar.example\":{\"tcp_port\":60002}}").unwrap(),
+            server_version: format!("electrs-esplora 9"),
+            genesis_hash: genesis_hash(Network::Testnet),
+            protocol_min: PROTOCOL_VERSION,
+            protocol_max: PROTOCOL_VERSION,
+            hash_function: "sha256".into(),
+            pruning: None,
+        };
+        let discovery = Arc::new(DiscoveryManager::new(
             Network::Testnet,
-            "1.4".parse().unwrap(),
-            Some("127.0.0.1:9150".parse().unwrap()),
-        );
-
+            features,
+            PROTOCOL_VERSION,
+            false,
+            None,
+        ));
         discovery.add_default_server(
             "electrum.blockstream.info".into(),
             vec![Service::Tcp(60001)],
-        );
-        discovery.add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)]);
+        ).unwrap();
+        discovery.add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)]).unwrap();
         discovery.add_default_server(
             "tn.not.fyi".into(),
             vec![Service::Tcp(55001), Service::Ssl(55002)],
-        );
+        ).unwrap();
         discovery.add_default_server(
             "electrum.blockstream.info".into(),
             vec![Service::Tcp(60001), Service::Ssl(60002)],
-        );
+        ).unwrap();
         discovery.add_default_server(
             "explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion".into(),
             vec![Service::Tcp(143)],
-        );
+        ).unwrap();
 
         debug!("{:#?}", discovery);
 

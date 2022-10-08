@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 use bitcoin::hashes::{hex::FromHex, sha256, Hash};
-use bitcoin::{BlockHash, Txid};
 use elements::confidential::{Asset, Value};
 use elements::encode::{deserialize, serialize};
+use elements::secp256k1_zkp::ZERO_TWEAK;
 use elements::{issuance::ContractHash, AssetId, AssetIssuance, OutPoint, Transaction, TxIn};
 
-use crate::chain::Network;
+use crate::chain::{BNetwork, BlockHash, Network, Txid};
 use crate::elements::peg::{get_pegin_data, get_pegout_data, PeginInfo, PegoutInfo};
 use crate::elements::registry::{AssetMeta, AssetRegistry};
 use crate::errors::*;
@@ -19,6 +20,9 @@ lazy_static! {
         AssetId::from_hex("6f0279e9ed041c3d710a9f57d0c02928416460c4b722ae3457a11eec381c526d")
             .unwrap();
     pub static ref NATIVE_ASSET_ID_TESTNET: AssetId =
+        AssetId::from_hex("144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49")
+            .unwrap();
+    pub static ref NATIVE_ASSET_ID_REGTEST: AssetId =
         AssetId::from_hex("5ac9f65c0efcc4775e0baec4ec03abdde22473cd3cf33c0419ca290e0751b225")
             .unwrap();
 }
@@ -31,20 +35,21 @@ fn parse_asset_id(sl: &[u8]) -> AssetId {
 #[serde(untagged)]
 pub enum LiquidAsset {
     Issued(IssuedAsset),
-    Native(NativeAsset),
+    Native(PeggedAsset),
 }
 
 #[derive(Serialize)]
-pub struct NativeAsset {
+pub struct PeggedAsset {
     pub asset_id: AssetId,
-    pub chain_stats: NativeAssetStats,
-    pub mempool_stats: NativeAssetStats,
+    pub chain_stats: PeggedAssetStats,
+    pub mempool_stats: PeggedAssetStats,
 }
 
 #[derive(Serialize)]
 pub struct IssuedAsset {
     pub asset_id: AssetId,
     pub issuance_txin: TxInput,
+    #[serde(serialize_with = "crate::util::serialize_outpoint")]
     pub issuance_prevout: OutPoint,
     pub reissuance_token: AssetId,
 
@@ -168,7 +173,7 @@ pub fn index_confirmed_tx_assets(
     tx: &Transaction,
     confirmed_height: u32,
     network: Network,
-    parent_network: Network,
+    parent_network: BNetwork,
     rows: &mut Vec<DBRow>,
 ) {
     let (history, issuances) = index_tx_assets(tx, network, parent_network);
@@ -192,7 +197,7 @@ pub fn index_confirmed_tx_assets(
 pub fn index_mempool_tx_assets(
     tx: &Transaction,
     network: Network,
-    parent_network: Network,
+    parent_network: BNetwork,
     asset_history: &mut HashMap<AssetId, Vec<TxHistoryInfo>>,
     asset_issuance: &mut HashMap<AssetId, AssetRow>,
 ) {
@@ -230,7 +235,7 @@ pub fn remove_mempool_tx_assets(
 fn index_tx_assets(
     tx: &Transaction,
     network: Network,
-    parent_network: Network,
+    parent_network: BNetwork,
 ) -> (Vec<(AssetId, TxHistoryInfo)>, Vec<(AssetId, AssetRow)>) {
     let mut history = vec![];
     let mut issuances = vec![];
@@ -247,7 +252,7 @@ fn index_tx_assets(
                     value: pegout.value,
                 }),
             ));
-        } else if txo.script_pubkey.is_provably_unspendable() {
+        } else if txo.script_pubkey.is_provably_unspendable() && !txo.is_fee() {
             if let (Asset::Explicit(asset_id), Value::Explicit(value)) = (txo.asset, txo.value) {
                 if value > 0 {
                     history.push((
@@ -274,7 +279,7 @@ fn index_tx_assets(
                 }),
             ));
         } else if txi.has_issuance() {
-            let is_reissuance = txi.asset_issuance.asset_blinding_nonce != [0u8; 32];
+            let is_reissuance = txi.asset_issuance.asset_blinding_nonce != ZERO_TWEAK;
 
             let asset_entropy = get_issuance_entropy(txi).expect("invalid issuance");
             let asset_id = AssetId::from_entropy(asset_entropy);
@@ -343,13 +348,14 @@ fn asset_history_row(
 
 pub fn lookup_asset(
     query: &Query,
-    registry: Option<&AssetRegistry>,
+    registry: Option<&Arc<RwLock<AssetRegistry>>>,
     asset_id: &AssetId,
+    meta: Option<&AssetMeta>, // may optionally be provided if already known
 ) -> Result<Option<LiquidAsset>> {
-    if asset_id == query.network().native_asset() {
-        let (chain_stats, mempool_stats) = native_asset_stats(query);
+    if query.network().pegged_asset() == Some(asset_id) {
+        let (chain_stats, mempool_stats) = pegged_asset_stats(query, asset_id);
 
-        return Ok(Some(LiquidAsset::Native(NativeAsset {
+        return Ok(Some(LiquidAsset::Native(PeggedAsset {
             asset_id: *asset_id,
             chain_stats: chain_stats,
             mempool_stats: mempool_stats,
@@ -370,7 +376,10 @@ pub fn lookup_asset(
     Ok(if let Some(row) = row {
         let reissuance_token = parse_asset_id(&row.reissuance_token);
 
-        let meta = registry.map_or_else(|| Ok(None), |r| r.load(asset_id))?;
+        let registry = registry.map(|r| r.read().unwrap());
+        let meta = meta
+            .or_else(|| registry.as_ref().and_then(|r| r.get(asset_id)))
+            .cloned();
         let stats = issued_asset_stats(query, asset_id, &reissuance_token);
         let status = query.get_tx_status(&deserialize(&row.issuance_txid).unwrap());
 
@@ -387,7 +396,7 @@ pub fn get_issuance_entropy(txin: &TxIn) -> Result<sha256::Midstate> {
         bail!("input has no issuance");
     }
 
-    let is_reissuance = txin.asset_issuance.asset_blinding_nonce != [0u8; 32];
+    let is_reissuance = txin.asset_issuance.asset_blinding_nonce != ZERO_TWEAK;
 
     Ok(if !is_reissuance {
         let contract_hash = ContractHash::from_slice(&txin.asset_issuance.asset_entropy)
@@ -403,7 +412,7 @@ pub fn get_issuance_entropy(txin: &TxIn) -> Result<sha256::Midstate> {
 // Asset stats
 //
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct IssuedAssetStats {
     pub tx_count: usize,
     pub issuance_count: usize,
@@ -414,22 +423,8 @@ pub struct IssuedAssetStats {
     pub burned_reissuance_tokens: u64,
 }
 
-impl Default for IssuedAssetStats {
-    fn default() -> Self {
-        Self {
-            tx_count: 0,
-            issuance_count: 0,
-            issued_amount: 0,
-            burned_amount: 0,
-            has_blinded_issuances: false,
-            reissuance_tokens: None,
-            burned_reissuance_tokens: 0,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct NativeAssetStats {
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PeggedAssetStats {
     pub tx_count: usize,
     pub peg_in_count: usize,
     pub peg_in_amount: u64,
@@ -437,20 +432,6 @@ pub struct NativeAssetStats {
     pub peg_out_amount: u64,
     pub burn_count: usize,
     pub burned_amount: u64,
-}
-
-impl Default for NativeAssetStats {
-    fn default() -> Self {
-        Self {
-            tx_count: 0,
-            peg_in_count: 0,
-            peg_in_amount: 0,
-            peg_out_count: 0,
-            peg_out_amount: 0,
-            burn_count: 0,
-            burned_amount: 0,
-        }
-    }
 }
 
 type AssetStatApplyFn<T> = fn(&TxHistoryInfo, &mut T, &mut HashSet<Txid>);
@@ -469,17 +450,15 @@ where
     }
 }
 
-// Get stats for the network's native asset
-fn native_asset_stats(query: &Query) -> (NativeAssetStats, NativeAssetStats) {
-    let asset_id = query.network().native_asset();
-
+// Get stats for the network's pegged asset
+fn pegged_asset_stats(query: &Query, asset_id: &AssetId) -> (PeggedAssetStats, PeggedAssetStats) {
     (
-        chain_asset_stats(query.chain(), asset_id, apply_native_asset_stats),
-        mempool_asset_stats(&query.mempool(), asset_id, apply_native_asset_stats),
+        chain_asset_stats(query.chain(), asset_id, apply_pegged_asset_stats),
+        mempool_asset_stats(&query.mempool(), asset_id, apply_pegged_asset_stats),
     )
 }
 
-// Get stats for user-issued assets
+// Get stats for issued assets
 fn issued_asset_stats(
     query: &Query,
     asset_id: &AssetId,
@@ -500,7 +479,7 @@ fn issued_asset_stats(
     (chain_stats, mempool_stats)
 }
 
-// Get on-chain confirmed asset stats (user-issued or the native asset)
+// Get on-chain confirmed asset stats (issued or the pegged asset)
 fn chain_asset_stats<T>(chain: &ChainQuery, asset_id: &AssetId, apply_fn: AssetStatApplyFn<T>) -> T
 where
     T: Default + serde::Serialize + serde::de::DeserializeOwned,
@@ -569,7 +548,7 @@ fn chain_asset_stats_delta<T>(
     (stats, lastblock)
 }
 
-// Get mempool asset stats (user-issued or the native asset)
+// Get mempool asset stats (issued or the pegged asset)
 pub fn mempool_asset_stats<T>(
     mempool: &Mempool,
     asset_id: &AssetId,
@@ -629,9 +608,9 @@ fn apply_issued_asset_stats(
     }
 }
 
-fn apply_native_asset_stats(
+fn apply_pegged_asset_stats(
     info: &TxHistoryInfo,
-    stats: &mut NativeAssetStats,
+    stats: &mut PeggedAssetStats,
     seen_txids: &mut HashSet<Txid>,
 ) {
     if seen_txids.insert(info.get_txid()) {

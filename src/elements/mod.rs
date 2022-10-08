@@ -1,4 +1,5 @@
 use bitcoin::hashes::{hex::ToHex, Hash};
+use elements::secp256k1_zkp::ZERO_TWEAK;
 use elements::{confidential::Value, encode::serialize, issuance::ContractHash, AssetId, TxIn};
 
 pub mod asset;
@@ -7,7 +8,7 @@ mod registry;
 
 use asset::get_issuance_entropy;
 pub use asset::{lookup_asset, LiquidAsset};
-pub use registry::AssetRegistry;
+pub use registry::{AssetRegistry, AssetSorting};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct IssuanceValue {
@@ -31,7 +32,7 @@ pub struct IssuanceValue {
 impl From<&TxIn> for IssuanceValue {
     fn from(txin: &TxIn) -> Self {
         let issuance = &txin.asset_issuance;
-        let is_reissuance = issuance.asset_blinding_nonce != [0u8; 32];
+        let is_reissuance = issuance.asset_blinding_nonce != ZERO_TWEAK;
 
         let asset_entropy = get_issuance_entropy(txin).expect("invalid issuance");
         let asset_id = AssetId::from_entropy(asset_entropy);
@@ -48,7 +49,7 @@ impl From<&TxIn> for IssuanceValue {
             contract_hash: contract_hash.map(|h| h.to_hex()),
             is_reissuance,
             asset_blinding_nonce: if is_reissuance {
-                Some(hex::encode(issuance.asset_blinding_nonce))
+                Some(hex::encode(issuance.asset_blinding_nonce.as_ref()))
             } else {
                 None
             },

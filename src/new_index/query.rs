@@ -4,19 +4,17 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
-use crate::chain::{Network, OutPoint, Transaction, TxOut};
+use crate::chain::{Network, OutPoint, Transaction, TxOut, Txid};
 use crate::config::Config;
 use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::new_index::{ChainQuery, Mempool, ScriptStats, SpendingInput, Utxo};
 use crate::util::{is_spendable, BlockId, Bytes, TransactionStatus};
 
-use bitcoin::Txid;
-
 #[cfg(feature = "liquid")]
 use crate::{
     chain::AssetId,
-    elements::{lookup_asset, AssetRegistry, LiquidAsset},
+    elements::{lookup_asset, AssetRegistry, AssetSorting, LiquidAsset},
 };
 
 const FEE_ESTIMATES_TTL: u64 = 60; // seconds
@@ -34,7 +32,7 @@ pub struct Query {
     cached_estimates: RwLock<(HashMap<u16, f64>, Option<Instant>)>,
     cached_relayfee: RwLock<Option<f64>>,
     #[cfg(feature = "liquid")]
-    asset_db: Option<AssetRegistry>,
+    asset_db: Option<Arc<RwLock<AssetRegistry>>>,
 }
 
 impl Query {
@@ -165,7 +163,7 @@ impl Query {
     }
 
     pub fn estimate_fee(&self, conf_target: u16) -> Option<f64> {
-        if self.config.network_type == Network::Regtest {
+        if self.config.network_type.is_regtest() {
             return self.get_relayfee().ok();
         }
         if let (ref cache, Some(cache_time)) = *self.cached_estimates.read().unwrap() {
@@ -221,7 +219,7 @@ impl Query {
         mempool: Arc<RwLock<Mempool>>,
         daemon: Arc<Daemon>,
         config: Arc<Config>,
-        asset_db: Option<AssetRegistry>,
+        asset_db: Option<Arc<RwLock<AssetRegistry>>>,
     ) -> Self {
         Query {
             chain,
@@ -236,6 +234,29 @@ impl Query {
 
     #[cfg(feature = "liquid")]
     pub fn lookup_asset(&self, asset_id: &AssetId) -> Result<Option<LiquidAsset>> {
-        lookup_asset(&self, self.asset_db.as_ref(), asset_id)
+        lookup_asset(&self, self.asset_db.as_ref(), asset_id, None)
+    }
+
+    #[cfg(feature = "liquid")]
+    pub fn list_registry_assets(
+        &self,
+        start_index: usize,
+        limit: usize,
+        sorting: AssetSorting,
+    ) -> Result<(usize, Vec<LiquidAsset>)> {
+        let asset_db = match &self.asset_db {
+            None => return Ok((0, vec![])),
+            Some(db) => db.read().unwrap(),
+        };
+        let (total_num, results) = asset_db.list(start_index, limit, sorting);
+        // Attach on-chain information alongside the registry metadata
+        let results = results
+            .into_iter()
+            .map(|(asset_id, metadata)| {
+                Ok(lookup_asset(&self, None, asset_id, Some(metadata))?
+                    .chain_err(|| "missing registered asset")?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok((total_num, results))
     }
 }

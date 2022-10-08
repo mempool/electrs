@@ -1,18 +1,19 @@
-use crate::chain::{address, Network, OutPoint, Transaction, TxIn, TxOut};
+use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
 use crate::config::Config;
 use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
-    create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts,
-    get_script_asm, get_tx_fee, has_prevout, is_coinbase, script_to_address, BlockHeaderMeta,
-    BlockId, FullHash, TransactionStatus,
+    create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
+    has_prevout, is_coinbase, BlockHeaderMeta, BlockId, FullHash, ScriptToAddr, ScriptToAsm,
+    TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
-use bitcoin::consensus::encode;
+use {bitcoin::consensus::encode, std::str::FromStr};
+
+use bitcoin::blockdata::opcodes;
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Error as HashError;
-use bitcoin::{BitcoinHash, BlockHash, Script, Txid};
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
@@ -22,7 +23,7 @@ use hyperlocal::UnixServerExt;
 use std::fs;
 #[cfg(feature = "liquid")]
 use {
-    crate::elements::{peg::PegoutValue, IssuanceValue},
+    crate::elements::{peg::PegoutValue, AssetSorting, IssuanceValue},
     elements::{
         confidential::{Asset, Nonce, Value},
         encode, AssetId,
@@ -34,7 +35,6 @@ use serde_json;
 use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::os::unix::fs::FileTypeExt;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
@@ -43,6 +43,11 @@ const CHAIN_TXS_PER_PAGE: usize = 25;
 const MAX_MEMPOOL_TXS: usize = 50;
 const BLOCK_LIMIT: usize = 10;
 const ADDRESS_SEARCH_LIMIT: usize = 10;
+
+#[cfg(feature = "liquid")]
+const ASSETS_PER_PAGE: usize = 25;
+#[cfg(feature = "liquid")]
+const ASSETS_MAX_PER_PAGE: usize = 100;
 
 const TTL_LONG: u32 = 157_784_630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
@@ -60,6 +65,7 @@ struct BlockValue {
     weight: u32,
     merkle_root: String,
     previousblockhash: Option<String>,
+    mediantime: u32,
 
     #[cfg(not(feature = "liquid"))]
     nonce: u32,
@@ -78,9 +84,9 @@ impl BlockValue {
     fn new(blockhm: BlockHeaderMeta, network: Network) -> Self {
         let header = blockhm.header_entry.header();
         BlockValue {
-            id: header.bitcoin_hash().to_hex(),
+            id: header.block_hash().to_hex(),
             height: blockhm.header_entry.height() as u32,
-            version: header.version,
+            version: header.version as u32,
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
@@ -91,6 +97,7 @@ impl BlockValue {
             } else {
                 None
             },
+            mediantime: blockhm.mtp,
 
             #[cfg(not(feature = "liquid"))]
             bits: header.bits,
@@ -145,12 +152,12 @@ impl TransactionValue {
 
         TransactionValue {
             txid: tx.txid(),
-            version: tx.version,
+            version: tx.version as u32,
             locktime: tx.lock_time,
             vin: vins,
             vout: vouts,
-            size: tx.get_size() as u32,
-            weight: tx.get_weight() as u32,
+            size: tx.size() as u32,
+            weight: tx.weight() as u32,
             fee,
             status: Some(TransactionStatus::from(blockid)),
         }
@@ -201,17 +208,17 @@ impl TxInValue {
             txid: txin.previous_output.txid,
             vout: txin.previous_output.vout,
             prevout: prevout.map(|prevout| TxOutValue::new(prevout, config)),
-            scriptsig_asm: get_script_asm(&txin.script_sig),
+            scriptsig_asm: txin.script_sig.to_asm(),
             witness,
 
             inner_redeemscript_asm: innerscripts
                 .as_ref()
                 .and_then(|i| i.redeem_script.as_ref())
-                .map(get_script_asm),
+                .map(ScriptToAsm::to_asm),
             inner_witnessscript_asm: innerscripts
                 .as_ref()
                 .and_then(|i| i.witness_script.as_ref())
-                .map(get_script_asm),
+                .map(ScriptToAsm::to_asm),
 
             is_coinbase,
             sequence: txin.sequence,
@@ -292,8 +299,8 @@ impl TxOutValue {
         let is_fee = txout.is_fee();
 
         let script = &txout.script_pubkey;
-        let script_asm = get_script_asm(&script);
-        let script_addr = script_to_address(&script, config.network_type);
+        let script_asm = script.to_asm();
+        let script_addr = script.to_address_str(config.network_type);
 
         // TODO should the following something to put inside rust-elements lib?
         let script_type = if is_fee {
@@ -312,6 +319,8 @@ impl TxOutValue {
             "v0_p2wpkh"
         } else if script.is_v0_p2wsh() {
             "v0_p2wsh"
+        } else if is_v1_p2tr(script) {
+            "v1_p2tr"
         } else if script.is_provably_unspendable() {
             "provably_unspendable"
         } else {
@@ -337,6 +346,11 @@ impl TxOutValue {
             pegout,
         }
     }
+}
+fn is_v1_p2tr(script: &Script) -> bool {
+    script.len() == 34
+        && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[1] == opcodes::all::OP_PUSHBYTES_32.into_u8()
 }
 
 #[derive(Serialize)]
@@ -421,9 +435,12 @@ impl From<Utxo> for UtxoValue {
                 _ => None,
             },
             #[cfg(feature = "liquid")]
-            surjection_proof: utxo.witness.surjection_proof,
+            surjection_proof: utxo
+                .witness
+                .surjection_proof
+                .map_or(vec![], |p| (*p).serialize()),
             #[cfg(feature = "liquid")]
-            range_proof: utxo.witness.rangeproof,
+            range_proof: utxo.witness.rangeproof.map_or(vec![], |p| (*p).serialize()),
         }
     }
 }
@@ -539,7 +556,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
             let socket = create_socket(&addr);
             socket.listen(511).expect("setting backlog failed");
 
-            Server::from_tcp(socket.into_tcp_listener())
+            Server::from_tcp(socket.into())
                 .expect("Server::from_tcp failed")
                 .serve(make_service_fn(move |_| make_service_fn_inn()))
                 .with_graceful_shutdown(async {
@@ -668,6 +685,16 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
+        (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
+            let hash = BlockHash::from_hex(hash)?;
+            let header = query
+                .chain()
+                .get_block_header(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
+
+            let header_hex = hex::encode(encode::serialize(&header));
+            http_message(StatusCode::OK, header_hex, TTL_LONG)
+        }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"raw"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
             let raw = query
@@ -713,7 +740,7 @@ fn handle_request(
                 )));
             }
 
-            // header_by_hash() only returns the BlockId for non-orphaned blocks,
+            // blockid_by_hash() only returns the BlockId for non-orphaned blocks,
             // or None for orphaned
             let confirmed_blockid = query.chain().blockid_by_hash(&hash);
 
@@ -942,7 +969,7 @@ fn handle_request(
 
             let height = query
                 .chain()
-                .height_by_hash(&merkleblock.header.bitcoin_hash());
+                .height_by_hash(&merkleblock.header.block_hash());
 
             http_message(
                 StatusCode::OK,
@@ -1013,6 +1040,32 @@ fn handle_request(
 
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
             json_response(query.estimate_fee_map(), TTL_SHORT)
+        }
+
+        #[cfg(feature = "liquid")]
+        (&Method::GET, Some(&"assets"), Some(&"registry"), None, None, None) => {
+            let start_index: usize = query_params
+                .get("start_index")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+
+            let limit: usize = query_params
+                .get("limit")
+                .and_then(|n| n.parse().ok())
+                .map(|n: usize| n.min(ASSETS_MAX_PER_PAGE))
+                .unwrap_or(ASSETS_PER_PAGE);
+
+            let sorting = AssetSorting::from_query_params(&query_params)?;
+
+            let (total_num, assets) = query.list_registry_assets(start_index, limit, sorting)?;
+
+            Ok(Response::builder()
+                // Disable caching because we don't currently support caching with query string params
+                .header("Cache-Control", "no-store")
+                .header("Content-Type", "application/json")
+                .header("X-Total-Results", total_num.to_string())
+                .body(Body::from(serde_json::to_string(&assets)?))
+                .unwrap())
         }
 
         #[cfg(feature = "liquid")]
@@ -1186,14 +1239,21 @@ fn to_scripthash(
     }
 }
 
-#[allow(unused_variables)] // `network` is unused in liquid mode
 fn address_to_scripthash(addr: &str, network: Network) -> Result<FullHash, HttpError> {
+    #[cfg(not(feature = "liquid"))]
     let addr = address::Address::from_str(addr)?;
+    #[cfg(feature = "liquid")]
+    let addr = address::Address::parse_with_params(addr, network.address_params())?;
 
     #[cfg(not(feature = "liquid"))]
     let is_expected_net = {
         let addr_network = Network::from(addr.network);
-        addr_network == network || (addr_network == Network::Testnet && network == Network::Regtest)
+
+        // Testnet, Regtest and Signet all share the same version bytes,
+        // `addr_network` will be detected as Testnet for all of them.
+        addr_network == network
+            || (addr_network == Network::Testnet
+                && matches!(network, Network::Regtest | Network::Signet))
     };
 
     #[cfg(feature = "liquid")]

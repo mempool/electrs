@@ -1,6 +1,4 @@
 use arraydeque::{ArrayDeque, Wrapping};
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::Txid;
 use itertools::Itertools;
 
 #[cfg(not(feature = "liquid"))]
@@ -13,7 +11,7 @@ use std::iter::FromIterator;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::chain::{Network, OutPoint, Transaction, TxOut};
+use crate::chain::{deserialize, Network, OutPoint, Transaction, TxOut, Txid};
 use crate::config::Config;
 use crate::daemon::Daemon;
 use crate::errors::*;
@@ -291,7 +289,7 @@ impl Mempool {
         let to_add = match daemon.gettransactions(&txids) {
             Ok(txs) => txs,
             Err(err) => {
-                warn!("failed to get transactions {:?}: {}", txids, err); // e.g. new block or RBF
+                warn!("failed to get {} transactions: {}", txids.len(), err); // e.g. new block or RBF
                 return Ok(()); // keep the mempool until next update()
             }
         };
@@ -317,8 +315,10 @@ impl Mempool {
     }
 
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) {
-        if let Ok(tx) = daemon.getmempooltx(&txid) {
-            self.add(vec![tx])
+        if self.txstore.get(txid).is_none() {
+            if let Ok(tx) = daemon.getmempooltx(&txid) {
+                self.add(vec![tx])
+            }
         }
     }
 
@@ -378,12 +378,14 @@ impl Mempool {
                 )
             });
 
+            let config = &self.config;
+
             // An iterator over (ScriptHash, TxHistoryInfo)
             let funding = tx
                 .output
                 .iter()
                 .enumerate()
-                .filter(|(_, txo)| is_spendable(txo))
+                .filter(|(_, txo)| is_spendable(txo) || config.index_unspendables)
                 .map(|(index, txo)| {
                     (
                         compute_script_hash(&txo.script_pubkey),

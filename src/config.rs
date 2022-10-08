@@ -9,8 +9,10 @@ use stderrlog;
 
 use crate::chain::Network;
 use crate::daemon::CookieGetter;
-
 use crate::errors::*;
+
+#[cfg(feature = "liquid")]
+use bitcoin::Network as BNetwork;
 
 const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -31,6 +33,7 @@ pub struct Config {
     pub jsonrpc_import: bool,
     pub light_mode: bool,
     pub address_search: bool,
+    pub index_unspendables: bool,
     pub cors: Option<String>,
     pub precache_scripts: Option<String>,
     pub utxos_limit: usize,
@@ -38,7 +41,7 @@ pub struct Config {
     pub electrum_banner: String,
 
     #[cfg(feature = "liquid")]
-    pub parent_network: Network,
+    pub parent_network: BNetwork,
     #[cfg(feature = "liquid")]
     pub asset_db_path: Option<PathBuf>,
 
@@ -61,10 +64,7 @@ fn str_to_socketaddr(address: &str, what: &str) -> SocketAddr {
 
 impl Config {
     pub fn from_args() -> Config {
-        let network_help = format!(
-            "Select Bitcoin network type ({})",
-            Network::names().join(", ")
-        );
+        let network_help = format!("Select network type ({})", Network::names().join(", "));
 
         let args = App::new("Electrum Rust Server")
             .version(crate_version!())
@@ -149,6 +149,11 @@ impl Config {
                     .help("Enable prefix address search")
             )
             .arg(
+                Arg::with_name("index_unspendables")
+                    .long("index-unspendables")
+                    .help("Enable indexing of provably unspendable outputs")
+            )
+            .arg(
                 Arg::with_name("cors")
                     .long("cors")
                     .help("Origins allowed to make cross-site requests")
@@ -228,53 +233,79 @@ impl Config {
         #[cfg(feature = "liquid")]
         let parent_network = m
             .value_of("parent_network")
-            .map(Network::from)
+            .map(|s| s.parse().expect("invalid parent network"))
             .unwrap_or_else(|| match network_type {
-                Network::Liquid => Network::Bitcoin,
-                Network::LiquidRegtest => Network::Regtest,
-                _ => panic!("unknown liquid network, --parent-network is required"),
+                Network::Liquid => BNetwork::Bitcoin,
+                // XXX liquid testnet/regtest don't have a parent chain
+                Network::LiquidTestnet | Network::LiquidRegtest => BNetwork::Regtest,
             });
 
         #[cfg(feature = "liquid")]
         let asset_db_path = m.value_of("asset_db_path").map(PathBuf::from);
 
         let default_daemon_port = match network_type {
+            #[cfg(not(feature = "liquid"))]
             Network::Bitcoin => 8332,
+            #[cfg(not(feature = "liquid"))]
             Network::Testnet => 18332,
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => 18443,
+            #[cfg(not(feature = "liquid"))]
+            Network::Signet => 38332,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 7041,
             #[cfg(feature = "liquid")]
-            Network::LiquidRegtest => 7041,
+            Network::LiquidTestnet | Network::LiquidRegtest => 7040,
         };
         let default_electrum_port = match network_type {
+            #[cfg(not(feature = "liquid"))]
             Network::Bitcoin => 50001,
+            #[cfg(not(feature = "liquid"))]
             Network::Testnet => 60001,
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => 60401,
+            #[cfg(not(feature = "liquid"))]
+            Network::Signet => 60601,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 51000,
             #[cfg(feature = "liquid")]
+            Network::LiquidTestnet => 51301,
+            #[cfg(feature = "liquid")]
             Network::LiquidRegtest => 51401,
         };
         let default_http_port = match network_type {
+            #[cfg(not(feature = "liquid"))]
             Network::Bitcoin => 3000,
+            #[cfg(not(feature = "liquid"))]
             Network::Testnet => 3001,
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => 3002,
+            #[cfg(not(feature = "liquid"))]
+            Network::Signet => 3003,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 3000,
             #[cfg(feature = "liquid")]
+            Network::LiquidTestnet => 3001,
+            #[cfg(feature = "liquid")]
             Network::LiquidRegtest => 3002,
         };
         let default_monitoring_port = match network_type {
+            #[cfg(not(feature = "liquid"))]
             Network::Bitcoin => 4224,
+            #[cfg(not(feature = "liquid"))]
             Network::Testnet => 14224,
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => 24224,
+            #[cfg(not(feature = "liquid"))]
+            Network::Signet => 54224,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 34224,
+            #[cfg(feature = "liquid")]
+            Network::LiquidTestnet => 44324,
             #[cfg(feature = "liquid")]
             Network::LiquidRegtest => 44224,
         };
@@ -311,12 +342,19 @@ impl Config {
                 default_dir
             });
         match network_type {
+            #[cfg(not(feature = "liquid"))]
             Network::Bitcoin => (),
+            #[cfg(not(feature = "liquid"))]
             Network::Testnet => daemon_dir.push("testnet3"),
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => daemon_dir.push("regtest"),
+            #[cfg(not(feature = "liquid"))]
+            Network::Signet => daemon_dir.push("signet"),
 
             #[cfg(feature = "liquid")]
             Network::Liquid => daemon_dir.push("liquidv1"),
+            #[cfg(feature = "liquid")]
+            Network::LiquidTestnet => daemon_dir.push("liquidtestnet"),
             #[cfg(feature = "liquid")]
             Network::LiquidRegtest => daemon_dir.push("liquidregtest"),
         }
@@ -362,6 +400,7 @@ impl Config {
             jsonrpc_import: m.is_present("jsonrpc_import"),
             light_mode: m.is_present("light_mode"),
             address_search: m.is_present("address_search"),
+            index_unspendables: m.is_present("index_unspendables"),
             cors: m.value_of("cors").map(|s| s.to_string()),
             precache_scripts: m.value_of("precache_scripts").map(|s| s.to_string()),
 

@@ -7,9 +7,10 @@ pub mod fees;
 
 pub use self::block::{BlockHeaderMeta, BlockId, BlockMeta, BlockStatus, HeaderEntry, HeaderList};
 pub use self::fees::get_tx_fee;
-pub use self::script::{get_innerscripts, get_script_asm, script_to_address};
+pub use self::script::{get_innerscripts, ScriptToAddr, ScriptToAsm};
 pub use self::transaction::{
-    extract_tx_prevouts, has_prevout, is_coinbase, is_spendable, TransactionStatus, TxInput,
+    extract_tx_prevouts, has_prevout, is_coinbase, is_spendable, serialize_outpoint,
+    TransactionStatus, TxInput,
 };
 
 use std::collections::HashMap;
@@ -113,11 +114,11 @@ impl BoolThen for bool {
 
 pub fn create_socket(addr: &SocketAddr) -> Socket {
     let domain = match &addr {
-        SocketAddr::V4(_) => Domain::ipv4(),
-        SocketAddr::V6(_) => Domain::ipv6(),
+        SocketAddr::V4(_) => Domain::IPV4,
+        SocketAddr::V6(_) => Domain::IPV6,
     };
     let socket =
-        Socket::new(domain, Type::stream(), Some(Protocol::tcp())).expect("creating socket failed");
+        Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).expect("creating socket failed");
 
     #[cfg(unix)]
     socket

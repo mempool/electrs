@@ -1,14 +1,15 @@
-use crate::chain::BlockHeader;
+use crate::chain::{BlockHash, BlockHeader};
 use crate::errors::*;
 use crate::new_index::BlockEntry;
-
-use bitcoin::{BitcoinHash, BlockHash};
 
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::FromIterator;
 use std::slice;
+use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime as DateTime;
+
+const MTP_SPAN: usize = 11;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockId {
@@ -50,13 +51,13 @@ impl HeaderEntry {
 
 impl fmt::Debug for HeaderEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let last_block_time = DateTime::from_unix_timestamp(self.header().time as i64);
+        let last_block_time = DateTime::from_unix_timestamp(self.header().time as i64).unwrap();
         write!(
             f,
             "hash={} height={} @ {}",
             self.hash(),
             self.height(),
-            last_block_time.format(time::Format::Rfc3339),
+            last_block_time.format(&Rfc3339).unwrap(),
         )
     }
 }
@@ -95,7 +96,7 @@ impl HeaderList {
                 panic!(
                     "missing expected blockhash in headers map: {:?}, pointed from: {:?}",
                     blockhash,
-                    headers_chain.last().map(|h| h.bitcoin_hash())
+                    headers_chain.last().map(|h| h.block_hash())
                 )
             });
             blockhash = header.prev_blockhash;
@@ -122,7 +123,7 @@ impl HeaderList {
         }
         let hashed_headers =
             Vec::<HashedHeader>::from_iter(new_headers.into_iter().map(|header| HashedHeader {
-                blockhash: header.bitcoin_hash(),
+                blockhash: header.block_hash(),
                 header,
             }));
         for i in 1..hashed_headers.len() {
@@ -231,6 +232,23 @@ impl HeaderList {
     pub fn iter(&self) -> slice::Iter<HeaderEntry> {
         self.headers.iter()
     }
+
+    /// Get the Median Time Past
+    pub fn get_mtp(&self, height: usize) -> u32 {
+        // Use the timestamp as the mtp of the genesis block.
+        // Matches bitcoind's behaviour: bitcoin-cli getblock `bitcoin-cli getblockhash 0` | jq '.time == .mediantime'
+        if height == 0 {
+            self.headers.get(0).unwrap().header.time
+        } else if height > self.len() - 1 {
+            0
+        } else {
+            let mut timestamps = (height.saturating_sub(MTP_SPAN - 1)..=height)
+                .map(|p_height| self.headers.get(p_height).unwrap().header.time)
+                .collect::<Vec<_>>();
+            timestamps.sort_unstable();
+            timestamps[timestamps.len() / 2]
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -269,13 +287,14 @@ pub struct BlockMeta {
 pub struct BlockHeaderMeta {
     pub header_entry: HeaderEntry,
     pub meta: BlockMeta,
+    pub mtp: u32,
 }
 
 impl From<&BlockEntry> for BlockMeta {
     fn from(b: &BlockEntry) -> BlockMeta {
         BlockMeta {
             tx_count: b.block.txdata.len() as u32,
-            weight: b.block.get_weight() as u32,
+            weight: b.block.weight() as u32,
             size: b.size,
         }
     }

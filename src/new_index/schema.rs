@@ -1,8 +1,7 @@
-use bitcoin::blockdata::script::Script;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
 use bitcoin::util::merkleblock::MerkleBlock;
-use bitcoin::{BlockHash, Txid, VarInt};
+use bitcoin::VarInt;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use itertools::Itertools;
@@ -20,14 +19,16 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use crate::chain::{BlockHeader, Network, OutPoint, Transaction, TxOut, Value};
+use crate::chain::{
+    BlockHash, BlockHeader, Network, OutPoint, Script, Transaction, TxOut, Txid, Value,
+};
 use crate::config::Config;
 use crate::daemon::Daemon;
 use crate::errors::*;
-use crate::metrics::{HistogramOpts, HistogramTimer, HistogramVec, Metrics};
+use crate::metrics::{Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics};
 use crate::util::{
-    full_hash, has_prevout, is_spendable, script_to_address, BlockHeaderMeta, BlockId, BlockMeta,
-    BlockStatus, Bytes, HeaderEntry, HeaderList,
+    full_hash, has_prevout, is_spendable, BlockHeaderMeta, BlockId, BlockMeta, BlockStatus, Bytes,
+    HeaderEntry, HeaderList, ScriptToAddr,
 };
 
 use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB};
@@ -164,14 +165,16 @@ pub struct Indexer {
     from: FetchFrom,
     iconfig: IndexerConfig,
     duration: HistogramVec,
+    tip_metric: Gauge,
 }
 
 struct IndexerConfig {
     light_mode: bool,
     address_search: bool,
+    index_unspendables: bool,
     network: Network,
     #[cfg(feature = "liquid")]
-    parent_network: Network,
+    parent_network: crate::chain::BNetwork,
 }
 
 impl From<&Config> for IndexerConfig {
@@ -179,6 +182,7 @@ impl From<&Config> for IndexerConfig {
         IndexerConfig {
             light_mode: config.light_mode,
             address_search: config.address_search,
+            index_unspendables: config.index_unspendables,
             network: config.network_type,
             #[cfg(feature = "liquid")]
             parent_network: config.parent_network,
@@ -206,6 +210,7 @@ impl Indexer {
                 HistogramOpts::new("index_duration", "Index update duration (in seconds)"),
                 &["step"],
             ),
+            tip_metric: metrics.gauge(MetricOpts::new("tip_height", "Current chain tip height")),
         }
     }
 
@@ -293,6 +298,8 @@ impl Indexer {
         if let FetchFrom::BlkFiles = self.from {
             self.from = FetchFrom::Bitcoind;
         }
+
+        self.tip_metric.set(headers.len() as i64 - 1);
 
         Ok(tip)
     }
@@ -418,11 +425,23 @@ impl ChainQuery {
         }
     }
 
+    pub fn get_block_header(&self, hash: &BlockHash) -> Option<BlockHeader> {
+        let _timer = self.start_timer("get_block_header");
+        Some(self.header_by_hash(hash)?.header().clone())
+    }
+
+    pub fn get_mtp(&self, height: usize) -> u32 {
+        let _timer = self.start_timer("get_block_mtp");
+        self.store.indexed_headers.read().unwrap().get_mtp(height)
+    }
+
     pub fn get_block_with_meta(&self, hash: &BlockHash) -> Option<BlockHeaderMeta> {
         let _timer = self.start_timer("get_block_with_meta");
+        let header_entry = self.header_by_hash(hash)?;
         Some(BlockHeaderMeta {
-            header_entry: self.header_by_hash(hash)?,
             meta: self.get_block_meta(hash)?,
+            mtp: self.get_mtp(header_entry.height()),
+            header_entry,
         })
     }
 
@@ -896,12 +915,11 @@ impl ChainQuery {
         let blockid = self.tx_confirming_block(txid)?;
         let headerentry = self.header_by_hash(&blockid.hash)?;
         let block_txids = self.get_block_txids(&blockid.hash)?;
-        let match_txids = vec![*txid].into_iter().collect();
 
-        Some(MerkleBlock::from_header_txids(
+        Some(MerkleBlock::from_header_txids_with_predicate(
             headerentry.header(),
             &block_txids,
-            &match_txids,
+            |t| t == txid,
         ))
     }
 
@@ -985,7 +1003,7 @@ fn add_transaction(
 
     let txid = full_hash(&tx.txid()[..]);
     for (txo_index, txo) in tx.output.iter().enumerate() {
-        if !txo.script_pubkey.is_provably_unspendable() {
+        if is_spendable(txo) {
             rows.push(TxOutRow::new(&txid, txo_index, txo).into_row());
         }
     }
@@ -1072,7 +1090,7 @@ fn index_transaction(
     //      S{funding-txid:vout}{spending-txid:vin} → ""
     let txid = full_hash(&tx.txid()[..]);
     for (txo_index, txo) in tx.output.iter().enumerate() {
-        if is_spendable(txo) {
+        if is_spendable(txo) || iconfig.index_unspendables {
             let history = TxHistoryRow::new(
                 &txo.script_pubkey,
                 confirmed_height,
@@ -1133,7 +1151,7 @@ fn index_transaction(
 }
 
 fn addr_search_row(spk: &Script, network: Network) -> Option<DBRow> {
-    script_to_address(spk, network).map(|address| DBRow {
+    spk.to_address_str(network).map(|address| DBRow {
         key: [b"a", address.as_bytes()].concat(),
         value: vec![],
     })

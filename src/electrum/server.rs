@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
-use bitcoin::Txid;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use error_chain::ChainedError;
@@ -18,6 +17,7 @@ use bitcoin::consensus::encode::serialize;
 #[cfg(feature = "liquid")]
 use elements::encode::serialize;
 
+use crate::chain::Txid;
 use crate::config::Config;
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
@@ -287,7 +287,7 @@ impl Connection {
 
         Ok(json!({
             "confirmed": chain_stats.funded_txo_sum - chain_stats.spent_txo_sum,
-            "unconfirmed": mempool_stats.funded_txo_sum - mempool_stats.spent_txo_sum,
+            "unconfirmed": mempool_stats.funded_txo_sum as i64 - mempool_stats.spent_txo_sum as i64,
         }))
     }
 
@@ -653,7 +653,7 @@ impl RPC {
             socket
                 .set_nonblocking(false)
                 .expect("cannot set nonblocking to false");
-            let listener = socket.into_tcp_listener();
+            let listener = TcpListener::from(socket);
 
             info!("Electrum RPC server running on {}", addr);
             loop {
@@ -687,10 +687,11 @@ impl RPC {
         // Discovery is enabled when electrum-public-hosts is set
         #[cfg(feature = "electrum-discovery")]
         let discovery = config.electrum_public_hosts.clone().map(|hosts| {
+            use crate::chain::genesis_hash;
             let features = ServerFeatures {
                 hosts,
                 server_version: format!("electrs-esplora {}", ELECTRS_VERSION),
-                genesis_hash: config.network_type.genesis_hash(),
+                genesis_hash: genesis_hash(config.network_type),
                 protocol_min: PROTOCOL_VERSION,
                 protocol_max: PROTOCOL_VERSION,
                 hash_function: "sha256".into(),

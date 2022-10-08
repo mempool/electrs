@@ -1,17 +1,17 @@
-use bitcoin::{BlockHash, Txid};
-
-#[cfg(feature = "liquid")]
-use bitcoin::hashes::hex::FromHex;
-
-use crate::chain::{OutPoint, Transaction, TxIn, TxOut};
+use crate::chain::{BlockHash, OutPoint, Transaction, TxIn, TxOut, Txid};
 use crate::util::BlockId;
 
 use std::collections::HashMap;
 
 #[cfg(feature = "liquid")]
+use bitcoin::hashes::hex::FromHex;
+
+#[cfg(feature = "liquid")]
 lazy_static! {
     static ref REGTEST_INITIAL_ISSUANCE_PREVOUT: Txid =
         Txid::from_hex("50cdc410c9d0d61eeacc531f52d2c70af741da33af127c364e52ac1ee7c030a5").unwrap();
+    static ref TESTNET_INITIAL_ISSUANCE_PREVOUT: Txid =
+        Txid::from_hex("0c52d2526a5c9f00e9fb74afd15dd3caaf17c823159a514f929ae25193a43a52").unwrap();
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,7 +63,8 @@ pub fn has_prevout(txin: &TxIn) -> bool {
     #[cfg(feature = "liquid")]
     return !txin.is_coinbase()
         && !txin.is_pegin
-        && txin.previous_output.txid != *REGTEST_INITIAL_ISSUANCE_PREVOUT;
+        && txin.previous_output.txid != *REGTEST_INITIAL_ISSUANCE_PREVOUT
+        && txin.previous_output.txid != *TESTNET_INITIAL_ISSUANCE_PREVOUT;
 }
 
 pub fn is_spendable(txout: &TxOut) -> bool {
@@ -92,4 +93,15 @@ pub fn extract_tx_prevouts<'a>(
             ))
         })
         .collect()
+}
+
+pub fn serialize_outpoint<S>(outpoint: &OutPoint, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::ser::Serializer,
+{
+    use serde::ser::SerializeStruct;
+    let mut s = serializer.serialize_struct("OutPoint", 2)?;
+    s.serialize_field("txid", &outpoint.txid)?;
+    s.serialize_field("vout", &outpoint.vout)?;
+    s.end()
 }
