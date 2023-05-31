@@ -1064,9 +1064,16 @@ fn index_blocks(
         .par_iter() // serialization is CPU-intensive
         .map(|b| {
             let mut rows = vec![];
-            for tx in &b.block.txdata {
+            for (tx_index, tx) in b.block.txdata.iter().enumerate() {
                 let height = b.entry.height() as u32;
-                index_transaction(tx, height, previous_txos_map, &mut rows, iconfig);
+                index_transaction(
+                    tx,
+                    height,
+                    tx_index as u32,
+                    previous_txos_map,
+                    &mut rows,
+                    iconfig,
+                );
             }
             rows.push(BlockRow::new_done(full_hash(&b.entry.hash()[..])).into_row()); // mark block as "indexed"
             rows
@@ -1079,13 +1086,14 @@ fn index_blocks(
 fn index_transaction(
     tx: &Transaction,
     confirmed_height: u32,
+    tx_index_in_block: u32,
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     rows: &mut Vec<DBRow>,
     iconfig: &IndexerConfig,
 ) {
     // persist history index:
-    //      H{funding-scripthash}{funding-height}F{funding-txid:vout} → ""
-    //      H{funding-scripthash}{spending-height}S{spending-txid:vin}{funding-txid:vout} → ""
+    //      H{funding-scripthash}{funding-height}{tx-index-in-block}F{funding-txid:vout} → ""
+    //      H{funding-scripthash}{spending-height}{tx-index-in-block}S{spending-txid:vin}{funding-txid:vout} → ""
     // persist "edges" for fast is-this-TXO-spent check
     //      S{funding-txid:vout}{spending-txid:vin} → ""
     let txid = full_hash(&tx.txid()[..]);
@@ -1094,6 +1102,7 @@ fn index_transaction(
             let history = TxHistoryRow::new(
                 &txo.script_pubkey,
                 confirmed_height,
+                tx_index_in_block,
                 TxHistoryInfo::Funding(FundingInfo {
                     txid,
                     vout: txo_index as u16,
@@ -1120,6 +1129,7 @@ fn index_transaction(
         let history = TxHistoryRow::new(
             &prev_txo.script_pubkey,
             confirmed_height,
+            tx_index_in_block,
             TxHistoryInfo::Spending(SpendingInfo {
                 txid,
                 vin: txi_index as u16,
@@ -1416,6 +1426,7 @@ pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
     pub confirmed_height: u32, // MUST be serialized as big-endian (for correct scans).
+    pub tx_index_in_block: u32, // For dependency ordering
     pub txinfo: TxHistoryInfo,
 }
 
@@ -1424,11 +1435,17 @@ pub struct TxHistoryRow {
 }
 
 impl TxHistoryRow {
-    fn new(script: &Script, confirmed_height: u32, txinfo: TxHistoryInfo) -> Self {
+    fn new(
+        script: &Script,
+        confirmed_height: u32,
+        tx_index_in_block: u32,
+        txinfo: TxHistoryInfo,
+    ) -> Self {
         let key = TxHistoryKey {
             code: b'H',
             hash: compute_script_hash(&script),
             confirmed_height,
+            tx_index_in_block,
             txinfo,
         };
         TxHistoryRow { key }
