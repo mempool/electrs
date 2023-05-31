@@ -807,13 +807,15 @@ fn handle_request(
                 let is_mempool = query
                     .mempool()
                     .history_txids_iter(&script_hash[..])
-                    .find(|txid| given_txid == txid)
-                    .is_some();
-                let is_confirmed = query
-                    .chain()
-                    .history_txids_iter(&script_hash[..])
-                    .find(|txid| given_txid == txid)
-                    .is_some();
+                    .any(|txid| given_txid == &txid);
+                let is_confirmed = if is_mempool {
+                    false
+                } else {
+                    query
+                        .chain()
+                        .history_txids_iter(&script_hash[..])
+                        .any(|txid| given_txid == &txid)
+                };
                 if !is_mempool && !is_confirmed {
                     return Err(HttpError(
                         StatusCode::UNPROCESSABLE_ENTITY,
@@ -831,7 +833,7 @@ fn handle_request(
             );
 
             if txs.len() < max_txs {
-                let after_txid_ref = if txs.len() > 0 {
+                let after_txid_ref = if !txs.is_empty() {
                     // If there are any txs, we know mempool found the
                     // after_txid IF it exists... so always return None.
                     None
