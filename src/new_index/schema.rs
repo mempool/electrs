@@ -468,6 +468,12 @@ impl ChainQuery {
         self._history(b'H', scripthash, last_seen_txid, limit)
     }
 
+    pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {
+        self.history_iter_scan_reverse(b'H', scripthash)
+            .map(|row| TxHistoryRow::from_row(row).get_txid())
+            .unique()
+    }
+
     fn _history(
         &self,
         code: u8,
