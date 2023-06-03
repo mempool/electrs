@@ -327,7 +327,9 @@ impl Mempool {
             .set(self.txstore.len() as f64);
 
         // Update cached backlog stats (if expired)
-        if self.backlog_stats.1.elapsed() > Duration::from_secs(self.config.mempool_backlog_stats_ttl) {
+        if self.backlog_stats.1.elapsed()
+            > Duration::from_secs(self.config.mempool_backlog_stats_ttl)
+        {
             let _timer = self
                 .latency
                 .with_label_values(&["update_backlog_stats"])

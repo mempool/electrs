@@ -1175,7 +1175,11 @@ fn handle_request(
 
             let txs = query
                 .chain()
-                .asset_history(&asset_id, last_seen_txid.as_ref(), config.rest_default_chain_txs_per_page)
+                .asset_history(
+                    &asset_id,
+                    last_seen_txid.as_ref(),
+                    config.rest_default_chain_txs_per_page,
+                )
                 .into_iter()
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();

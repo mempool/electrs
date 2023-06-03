@@ -435,8 +435,16 @@ impl Config {
             mempool_backlog_stats_ttl: value_t_or_exit!(m, "mempool_backlog_stats_ttl", u64),
             mempool_recent_txs_size: value_t_or_exit!(m, "mempool_recent_txs_size", usize),
             rest_default_block_limit: value_t_or_exit!(m, "rest_default_block_limit", usize),
-            rest_default_chain_txs_per_page: value_t_or_exit!(m, "rest_default_chain_txs_per_page", usize),
-            rest_default_max_mempool_txs: value_t_or_exit!(m, "rest_default_max_mempool_txs", usize),
+            rest_default_chain_txs_per_page: value_t_or_exit!(
+                m,
+                "rest_default_chain_txs_per_page",
+                usize
+            ),
+            rest_default_max_mempool_txs: value_t_or_exit!(
+                m,
+                "rest_default_max_mempool_txs",
+                usize
+            ),
             jsonrpc_import: m.is_present("jsonrpc_import"),
             light_mode: m.is_present("light_mode"),
             address_search: m.is_present("address_search"),
