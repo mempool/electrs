@@ -26,9 +26,6 @@ use crate::util::{extract_tx_prevouts, full_hash, has_prevout, is_spendable, Byt
 #[cfg(feature = "liquid")]
 use crate::elements::asset;
 
-const RECENT_TXS_SIZE: usize = 10;
-const BACKLOG_STATS_TTL: u64 = 10;
-
 pub struct Mempool {
     chain: Arc<ChainQuery>,
     config: Arc<Config>,
@@ -65,15 +62,14 @@ impl Mempool {
     pub fn new(chain: Arc<ChainQuery>, metrics: &Metrics, config: Arc<Config>) -> Self {
         Mempool {
             chain,
-            config,
             txstore: HashMap::new(),
             feeinfo: HashMap::new(),
             history: HashMap::new(),
             edges: HashMap::new(),
-            recent: BoundedVecDeque::new(RECENT_TXS_SIZE),
+            recent: BoundedVecDeque::new(config.mempool_recent_txs_size),
             backlog_stats: (
                 BacklogStats::default(),
-                Instant::now() - Duration::from_secs(BACKLOG_STATS_TTL),
+                Instant::now() - Duration::from_secs(config.mempool_backlog_stats_ttl),
             ),
             latency: metrics.histogram_vec(
                 HistogramOpts::new("mempool_latency", "Mempool requests latency (in seconds)"),
@@ -92,6 +88,7 @@ impl Mempool {
             asset_history: HashMap::new(),
             #[cfg(feature = "liquid")]
             asset_issuance: HashMap::new(),
+            config,
         }
     }
 
@@ -330,7 +327,7 @@ impl Mempool {
             .set(self.txstore.len() as f64);
 
         // Update cached backlog stats (if expired)
-        if self.backlog_stats.1.elapsed() > Duration::from_secs(BACKLOG_STATS_TTL) {
+        if self.backlog_stats.1.elapsed() > Duration::from_secs(self.config.mempool_backlog_stats_ttl) {
             let _timer = self
                 .latency
                 .with_label_values(&["update_backlog_stats"])
