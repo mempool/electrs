@@ -39,6 +39,11 @@ pub struct Config {
     pub utxos_limit: usize,
     pub electrum_txs_limit: usize,
     pub electrum_banner: String,
+    pub mempool_backlog_stats_ttl: u64,
+    pub mempool_recent_txs_size: usize,
+    pub rest_default_block_limit: usize,
+    pub rest_default_chain_txs_per_page: usize,
+    pub rest_default_max_mempool_txs: usize,
 
     #[cfg(feature = "liquid")]
     pub parent_network: BNetwork,
@@ -170,6 +175,36 @@ impl Config {
                     .long("utxos-limit")
                     .help("Maximum number of utxos to process per address. Lookups for addresses with more utxos will fail. Applies to the Electrum and HTTP APIs.")
                     .default_value("500")
+            )
+            .arg(
+                Arg::with_name("mempool_backlog_stats_ttl")
+                    .long("mempool-backlog-stats-ttl")
+                    .help("The number of seconds that need to pass before Mempool::update will update the latency histogram again.")
+                    .default_value("10")
+            )
+            .arg(
+                Arg::with_name("mempool_recent_txs_size")
+                    .long("mempool-recent-txs-size")
+                    .help("The number of transactions that mempool will keep in its recents queue. This is returned by mempool/recent endpoint.")
+                    .default_value("10")
+            )
+            .arg(
+                Arg::with_name("rest_default_block_limit")
+                    .long("rest-default-block-limit")
+                    .help("The default number of blocks returned from the blocks/[start_height] endpoint.")
+                    .default_value("10")
+            )
+            .arg(
+                Arg::with_name("rest_default_chain_txs_per_page")
+                    .long("rest-default-chain-txs-per-page")
+                    .help("The default number of on-chain transactions returned by the txs endpoints.")
+                    .default_value("25")
+            )
+            .arg(
+                Arg::with_name("rest_default_max_mempool_txs")
+                    .long("rest-default-max-mempool-txs")
+                    .help("The default number of mempool transactions returned by the txs endpoints.")
+                    .default_value("50")
             )
             .arg(
                 Arg::with_name("electrum_txs_limit")
@@ -397,6 +432,11 @@ impl Config {
             http_addr,
             http_socket_file,
             monitoring_addr,
+            mempool_backlog_stats_ttl: value_t_or_exit!(m, "mempool_backlog_stats_ttl", u64),
+            mempool_recent_txs_size: value_t_or_exit!(m, "mempool_recent_txs_size", usize),
+            rest_default_block_limit: value_t_or_exit!(m, "rest_default_block_limit", usize),
+            rest_default_chain_txs_per_page: value_t_or_exit!(m, "rest_default_chain_txs_per_page", usize),
+            rest_default_max_mempool_txs: value_t_or_exit!(m, "rest_default_max_mempool_txs", usize),
             jsonrpc_import: m.is_present("jsonrpc_import"),
             light_mode: m.is_present("light_mode"),
             address_search: m.is_present("address_search"),
