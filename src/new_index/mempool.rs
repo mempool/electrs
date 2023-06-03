@@ -1,4 +1,4 @@
-use arraydeque::{ArrayDeque, Wrapping};
+use bounded_vec_deque::BoundedVecDeque;
 use itertools::Itertools;
 
 #[cfg(not(feature = "liquid"))]
@@ -36,7 +36,7 @@ pub struct Mempool {
     feeinfo: HashMap<Txid, TxFeeInfo>,
     history: HashMap<FullHash, Vec<TxHistoryInfo>>, // ScriptHash -> {history_entries}
     edges: HashMap<OutPoint, (Txid, u32)>,          // OutPoint -> (spending_txid, spending_vin)
-    recent: ArrayDeque<[TxOverview; RECENT_TXS_SIZE], Wrapping>, // The N most recent txs to enter the mempool
+    recent: BoundedVecDeque<TxOverview>,            // The N most recent txs to enter the mempool
     backlog_stats: (BacklogStats, Instant),
 
     // monitoring
@@ -70,7 +70,7 @@ impl Mempool {
             feeinfo: HashMap::new(),
             history: HashMap::new(),
             edges: HashMap::new(),
-            recent: ArrayDeque::new(),
+            recent: BoundedVecDeque::new(RECENT_TXS_SIZE),
             backlog_stats: (
                 BacklogStats::default(),
                 Instant::now() - Duration::from_secs(BACKLOG_STATS_TTL),
@@ -381,7 +381,7 @@ impl Mempool {
             // Get feeinfo for caching and recent tx overview
             let feeinfo = TxFeeInfo::new(&tx, &prevouts, self.config.network_type);
 
-            // recent is an ArrayDeque that automatically evicts the oldest elements
+            // recent is an BoundedVecDeque that automatically evicts the oldest elements
             self.recent.push_front(TxOverview {
                 txid,
                 fee: feeinfo.fee,
