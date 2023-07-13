@@ -324,6 +324,8 @@ impl TxOutValue {
             "v1_p2tr"
         } else if script.is_provably_unspendable() {
             "provably_unspendable"
+        } else if is_bare_multisig(script) {
+            "multisig"
         } else {
             "unknown"
         };
@@ -352,6 +354,22 @@ fn is_v1_p2tr(script: &Script) -> bool {
     script.len() == 34
         && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
         && script[1] == opcodes::all::OP_PUSHBYTES_32.into_u8()
+}
+fn is_bare_multisig(script: &Script) -> bool {
+    let len = script.len();
+    // 1-of-1 multisig is 37 bytes
+    // Max is 15 pubkeys
+    // Min is 1
+    // First byte must be <= the second to last (4-of-2 makes no sense)
+    // We won't check the pubkeys, just assume anything with the form
+    //   OP_M ... OP_N OP_CHECKMULTISIG
+    // is bare multisig
+    len >= 37
+        && script[len - 1] == opcodes::all::OP_CHECKMULTISIG.into_u8()
+        && script[len - 2] >= opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[len - 2] <= opcodes::all::OP_PUSHNUM_15.into_u8()
+        && script[0] >= opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[0] <= script[len - 2]
 }
 
 #[derive(Serialize)]
