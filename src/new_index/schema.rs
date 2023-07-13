@@ -667,6 +667,7 @@ impl ChainQuery {
         let history_iter = self
             .history_iter_scan(b'H', scripthash, start_height)
             .map(TxHistoryRow::from_row)
+            .unique_by(|th| (th.get_txid(), th.get_funded_outpoint()))
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
                     .map(|blockid| (history, blockid))
