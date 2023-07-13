@@ -133,18 +133,45 @@ impl Mempool {
             .any(|txin| self.txstore.contains_key(&txin.previous_output.txid))
     }
 
-    pub fn history(&self, scripthash: &[u8], limit: usize) -> Vec<Transaction> {
+    pub fn history(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["history"]).start_timer();
-        self.history
-            .get(scripthash)
-            .map_or_else(|| vec![], |entries| self._history(entries, limit))
+        self.history.get(scripthash).map_or_else(
+            || vec![],
+            |entries| self._history(entries, last_seen_txid, limit),
+        )
     }
 
-    fn _history(&self, entries: &[TxHistoryInfo], limit: usize) -> Vec<Transaction> {
+    pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {
+        self.history
+            .get(scripthash)
+            .into_iter()
+            .flat_map(|v| v.iter().map(|e| e.get_txid()).unique())
+    }
+
+    fn _history(
+        &self,
+        entries: &[TxHistoryInfo],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<Transaction> {
         entries
             .iter()
             .map(|e| e.get_txid())
             .unique()
+            // TODO seek directly to last seen tx without reading earlier rows
+            .skip_while(|txid| {
+                // skip until we reach the last_seen_txid
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+            })
+            .skip(match last_seen_txid {
+                Some(_) => 1, // skip the last_seen_txid itself
+                None => 0,
+            })
             .take(limit)
             .map(|txid| self.txstore.get(&txid).expect("missing mempool tx"))
             .cloned()
@@ -515,7 +542,7 @@ impl Mempool {
             .start_timer();
         self.asset_history
             .get(asset_id)
-            .map_or_else(|| vec![], |entries| self._history(entries, limit))
+            .map_or_else(|| vec![], |entries| self._history(entries, None, limit))
     }
 }
 

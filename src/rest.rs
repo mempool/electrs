@@ -811,24 +811,61 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(CHAIN_TXS_PER_PAGE);
+            let after_txid = query_params
+                .get("after_txid")
+                .and_then(|s| s.parse::<Txid>().ok());
 
             let mut txs = vec![];
+
+            if let Some(given_txid) = &after_txid {
+                let is_mempool = query
+                    .mempool()
+                    .history_txids_iter(&script_hash[..])
+                    .any(|txid| given_txid == &txid);
+                let is_confirmed = if is_mempool {
+                    false
+                } else {
+                    query
+                        .chain()
+                        .history_txids_iter(&script_hash[..])
+                        .any(|txid| given_txid == &txid)
+                };
+                if !is_mempool && !is_confirmed {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+            }
 
             txs.extend(
                 query
                     .mempool()
-                    .history(&script_hash[..], MAX_MEMPOOL_TXS)
+                    .history(&script_hash[..], after_txid.as_ref(), max_txs)
                     .into_iter()
                     .map(|tx| (tx, None)),
             );
 
-            txs.extend(
-                query
-                    .chain()
-                    .history(&script_hash[..], None, CHAIN_TXS_PER_PAGE)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid))),
-            );
+            if txs.len() < max_txs {
+                let after_txid_ref = if !txs.is_empty() {
+                    // If there are any txs, we know mempool found the
+                    // after_txid IF it exists... so always return None.
+                    None
+                } else {
+                    after_txid.as_ref()
+                };
+                txs.extend(
+                    query
+                        .chain()
+                        .history(&script_hash[..], after_txid_ref, max_txs - txs.len())
+                        .into_iter()
+                        .map(|(tx, blockid)| (tx, Some(blockid))),
+                );
+            }
 
             json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
@@ -851,14 +888,14 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(CHAIN_TXS_PER_PAGE);
 
             let txs = query
                 .chain()
-                .history(
-                    &script_hash[..],
-                    last_seen_txid.as_ref(),
-                    CHAIN_TXS_PER_PAGE,
-                )
+                .history(&script_hash[..], last_seen_txid.as_ref(), max_txs)
                 .into_iter()
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
@@ -882,10 +919,14 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(MAX_MEMPOOL_TXS);
 
             let txs = query
                 .mempool()
-                .history(&script_hash[..], MAX_MEMPOOL_TXS)
+                .history(&script_hash[..], None, max_txs)
                 .into_iter()
                 .map(|tx| (tx, None))
                 .collect();
