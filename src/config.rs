@@ -365,7 +365,7 @@ impl Config {
         let cookie = m.value_of("cookie").map(|s| s.to_owned());
 
         let electrum_banner = m.value_of("electrum_banner").map_or_else(
-            || format!("Welcome to electrs-esplora {}", ELECTRS_VERSION),
+            || format!("Welcome to mempool-electrs {}", ELECTRS_VERSION),
             |s| s.into(),
         );
 
