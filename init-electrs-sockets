@@ -1,0 +1,24 @@
+#!/usr/bin/env zsh
+export ZPOOL=nvm
+
+export BITCOIN_HOME=/bitcoin
+export BITCOIN_USER=bitcoin
+export BITCOIN_GROUP=bitcoin
+
+export ELEMENTS_HOME=/elements
+export ELEMENTS_USER=elements
+export ELEMENTS_GROUP=elements
+
+# create /bitcoin/socket with custom ACL for electrs unix sockets
+zfs create -o "mountpoint=${BITCOIN_HOME}/socket" "${ZPOOL}/bitcoin/socket"
+
+# create /elements/socket with custom ACL for electrs unix sockets
+zfs create -o "mountpoint=${ELEMENTS_HOME}/socket" "${ZPOOL}/elements/socket"
+
+setfacl -m "user:bitcoin:full_set:f:allow,user:mempool:full_set:f:allow,user:www:full_set:f:allow,everyone@::f:allow" "${BITCOIN_HOME}/socket"
+
+chown "${BITCOIN_USER}:${BITCOIN_GROUP}" "${BITCOIN_HOME}/socket"
+
+setfacl -m "user:elements:full_set:f:allow,user:mempool:full_set:f:allow,user:www:full_set:f:allow,everyone@::f:allow" "${ELEMENTS_HOME}/socket"
+
+chown "${ELEMENTS_USER}:${ELEMENTS_GROUP}" "${ELEMENTS_HOME}/socket"
