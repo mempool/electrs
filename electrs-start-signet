@@ -1,0 +1,25 @@
+#!/usr/bin/env zsh
+#source "${HOME}/.cargo/env"
+#export PATH="${HOME}/.cargo/bin:${PATH}"
+
+BITCOIN_RPC_USER=$(grep 'rpcuser=' "${HOME}/bitcoin.conf"|cut -d = -f2|head -1)
+BITCOIN_RPC_PASS=$(grep 'rpcpassword=' "${HOME}/bitcoin.conf"|cut -d = -f2|head -1)
+
+until false
+do
+	cd "${HOME}/electrs"
+	cargo run \
+		--release \
+		--bin electrs \
+		-- \
+		--network signet \
+		--http-socket-file "${HOME}/socket/esplora-bitcoin-signet" \
+		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--daemon-dir "${HOME}" \
+		--db-dir "/electrs" \
+		--cookie "${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASS}" \
+		--cors '*' \
+		--address-search \
+		-vvv
+	sleep 1
+done

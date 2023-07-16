@@ -1,0 +1,27 @@
+#!/usr/bin/env zsh
+#source "${HOME}/.cargo/env"
+#export PATH="${HOME}/.cargo/bin:${PATH}"
+
+ELEMENTS_RPC_USER=$(grep 'rpcuser=' ${HOME}/elements.conf|cut -d = -f2|head -1)
+ELEMENTS_RPC_PASS=$(grep 'rpcpassword=' ${HOME}/elements.conf|cut -d = -f2|head -1)
+
+until false
+do
+    cd "${HOME}/electrs"
+	cargo run \
+		--release \
+		--features liquid \
+		--bin electrs \
+		-- \
+		--network liquid \
+		--http-socket-file "${HOME}/socket/esplora-liquid-mainnet" \
+		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--asset-db-path "${HOME}/asset_registry_db" \
+		--daemon-dir "${HOME}" \
+		--db-dir /electrs \
+		--cookie "${ELEMENTS_RPC_USER}:${ELEMENTS_RPC_PASS}" \
+		--address-search \
+		--cors '*' \
+		-vvv
+	sleep 1
+done
