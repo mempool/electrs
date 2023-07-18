@@ -276,7 +276,11 @@ impl Connection {
         let status_hash = get_status_hash(history_txids, &self.query)
             .map_or(Value::Null, |h| json!(hex::encode(full_hash(&h[..]))));
 
-        if self.status_hashes.insert(script_hash, status_hash.clone()).is_none() {
+        if self
+            .status_hashes
+            .insert(script_hash, status_hash.clone())
+            .is_none()
+        {
             self.stats.subscriptions.inc();
         }
         Ok(status_hash)
@@ -423,9 +427,7 @@ impl Connection {
             "blockchain.transaction.broadcast" => self.blockchain_transaction_broadcast(params),
             "blockchain.transaction.get" => self.blockchain_transaction_get(params),
             "blockchain.transaction.get_merkle" => self.blockchain_transaction_get_merkle(params),
-            "blockchain.transaction.id_from_pos" => {
-                self.blockchain_transaction_id_from_pos(params)
-            }
+            "blockchain.transaction.id_from_pos" => self.blockchain_transaction_id_from_pos(params),
             "mempool.get_fee_histogram" => self.mempool_get_fee_histogram(),
             "server.banner" => self.server_banner(),
             "server.donation_address" => self.server_donation_address(),
@@ -516,11 +518,9 @@ impl Connection {
                         cmd.get("params").unwrap_or(&empty_params),
                         cmd.get("id"),
                     ) {
-                        (
-                            Some(Value::String(method)),
-                            Value::Array(params),
-                            Some(id),
-                        ) => self.handle_command(method, params, id)?,
+                        (Some(Value::String(method)), Value::Array(params), Some(id)) => {
+                            self.handle_command(method, params, id)?
+                        }
                         _ => bail!("invalid command: {}", cmd),
                     };
                     self.send_values(&[reply])?

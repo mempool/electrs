@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Lines, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,8 +41,7 @@ fn header_from_value(value: Value) -> Result<BlockHeader> {
         .as_str()
         .chain_err(|| format!("non-string header: {}", value))?;
     let header_bytes = hex::decode(header_hex).chain_err(|| "non-hex header")?;
-    deserialize(&header_bytes)
-            .chain_err(|| format!("failed to parse header {}", header_hex))
+    deserialize(&header_bytes).chain_err(|| format!("failed to parse header {}", header_hex))
 }
 
 fn block_from_value(value: Value) -> Result<Block> {
@@ -271,8 +270,8 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(
-        daemon_dir: &PathBuf,
-        blocks_dir: &PathBuf,
+        daemon_dir: &Path,
+        blocks_dir: &Path,
         daemon_rpc_addr: SocketAddr,
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
@@ -280,8 +279,8 @@ impl Daemon {
         metrics: &Metrics,
     ) -> Result<Daemon> {
         let daemon = Daemon {
-            daemon_dir: daemon_dir.clone(),
-            blocks_dir: blocks_dir.clone(),
+            daemon_dir: daemon_dir.to_owned(),
+            blocks_dir: blocks_dir.to_owned(),
             network,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
@@ -531,7 +530,7 @@ impl Daemon {
     pub fn broadcast_raw(&self, txhex: &str) -> Result<Txid> {
         let txid = self.request("sendrawtransaction", json!([txhex]))?;
         Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
-                .chain_err(|| "failed to parse txid")
+            .chain_err(|| "failed to parse txid")
     }
 
     // Get estimated feerates for the provided confirmation targets using a batch RPC request

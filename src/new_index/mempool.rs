@@ -140,10 +140,11 @@ impl Mempool {
         limit: usize,
     ) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["history"]).start_timer();
-        self.history.get(scripthash).map_or_else(
-            std::vec::Vec::new,
-            |entries| self._history(entries, last_seen_txid, limit),
-        )
+        self.history
+            .get(scripthash)
+            .map_or_else(std::vec::Vec::new, |entries| {
+                self._history(entries, last_seen_txid, limit)
+            })
     }
 
     pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {

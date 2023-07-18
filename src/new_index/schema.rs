@@ -135,7 +135,7 @@ pub struct SpendingInput {
     pub confirmed: Option<BlockId>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ScriptStats {
     pub tx_count: usize,
     pub funded_txo_count: usize,
@@ -144,20 +144,6 @@ pub struct ScriptStats {
     pub funded_txo_sum: u64,
     #[cfg(not(feature = "liquid"))]
     pub spent_txo_sum: u64,
-}
-
-impl ScriptStats {
-    pub fn default() -> Self {
-        ScriptStats {
-            tx_count: 0,
-            funded_txo_count: 0,
-            spent_txo_count: 0,
-            #[cfg(not(feature = "liquid"))]
-            funded_txo_sum: 0,
-            #[cfg(not(feature = "liquid"))]
-            spent_txo_sum: 0,
-        }
-    }
 }
 
 pub struct Indexer {

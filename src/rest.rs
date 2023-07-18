@@ -464,8 +464,7 @@ impl From<Utxo> for UtxoValue {
     }
 }
 
-#[derive(Serialize)]
-#[derive(Default)]
+#[derive(Serialize, Default)]
 struct SpendingValue {
     spent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -485,7 +484,6 @@ impl From<SpendingInput> for SpendingValue {
         }
     }
 }
-
 
 fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     height.map_or(TTL_SHORT, |height| {
@@ -1040,10 +1038,7 @@ fn handle_request(
                 .lookup_spend(&outpoint)
                 .map_or_else(SpendingValue::default, SpendingValue::from);
             let ttl = ttl_by_depth(
-                spend
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.block_height),
+                spend.status.as_ref().and_then(|status| status.block_height),
                 query,
             );
             json_response(spend, ttl)
