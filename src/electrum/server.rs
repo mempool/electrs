@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{Sender, SyncSender, TrySendError};
@@ -6,8 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
+use sha2::{Digest, Sha256};
 use error_chain::ChainedError;
 use hex;
 use serde_json::{from_str, Value};
@@ -75,8 +75,7 @@ fn get_status_hash(txs: Vec<(Txid, Option<BlockId>)>, query: &Query) -> Option<F
     if txs.is_empty() {
         None
     } else {
-        let mut hash = FullHash::default();
-        let mut sha2 = Sha256::new();
+        let mut hasher = Sha256::new();
         for (txid, blockid) in txs {
             let is_mempool = blockid.is_none();
             let has_unconfirmed_parents = is_mempool
@@ -84,10 +83,9 @@ fn get_status_hash(txs: Vec<(Txid, Option<BlockId>)>, query: &Query) -> Option<F
                 .unwrap_or(false);
             let height = get_electrum_height(blockid, has_unconfirmed_parents);
             let part = format!("{}:{}:", txid, height);
-            sha2.input(part.as_bytes());
+            hasher.update(part.as_bytes());
         }
-        sha2.result(&mut hash);
-        Some(hash)
+        Some(hasher.finalize()[..].try_into().expect("SHA256 size is 32 bytes"))
     }
 }
 
