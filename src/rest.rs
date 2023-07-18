@@ -134,7 +134,7 @@ impl TransactionValue {
         config: &Config,
     ) -> Self {
         let prevouts =
-            extract_tx_prevouts(&tx, &txos, true).expect("Cannot Err when allow_missing is true");
+            extract_tx_prevouts(&tx, txos, true).expect("Cannot Err when allow_missing is true");
         let vins: Vec<TxInValue> = tx
             .input
             .iter()
@@ -201,9 +201,9 @@ impl TxInValue {
             None
         };
 
-        let is_coinbase = is_coinbase(&txin);
+        let is_coinbase = is_coinbase(txin);
 
-        let innerscripts = prevout.map(|prevout| get_innerscripts(&txin, &prevout));
+        let innerscripts = prevout.map(|prevout| get_innerscripts(txin, prevout));
 
         TxInValue {
             txid: txin.previous_output.txid,
@@ -465,6 +465,7 @@ impl From<Utxo> for UtxoValue {
 }
 
 #[derive(Serialize)]
+#[derive(Default)]
 struct SpendingValue {
     spent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,16 +485,7 @@ impl From<SpendingInput> for SpendingValue {
         }
     }
 }
-impl Default for SpendingValue {
-    fn default() -> Self {
-        SpendingValue {
-            spent: false,
-            txid: None,
-            vin: None,
-            status: None,
-        }
-    }
-}
+
 
 fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     height.map_or(TTL_SHORT, |height| {
@@ -573,7 +565,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
         None => {
             info!("REST server running on {}", addr);
 
-            let socket = create_socket(&addr);
+            let socket = create_socket(addr);
             socket.listen(511).expect("setting backlog failed");
 
             Server::from_tcp(socket.into())
@@ -585,7 +577,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                 .await
         }
         Some(path) => {
-            if let Ok(meta) = fs::metadata(&path) {
+            if let Ok(meta) = fs::metadata(path) {
                 // Cleanup socket file left by previous execution
                 if meta.file_type().is_socket() {
                     fs::remove_file(path).ok();
@@ -642,7 +634,7 @@ fn handle_request(
     // TODO it looks hyper does not have routing and query parsing :(
     let path: Vec<&str> = uri.path().split('/').skip(1).collect();
     let query_params = match uri.query() {
-        Some(value) => form_urlencoded::parse(&value.as_bytes())
+        Some(value) => form_urlencoded::parse(value.as_bytes())
             .into_owned()
             .collect::<HashMap<String, String>>(),
         None => HashMap::new(),
@@ -651,7 +643,7 @@ fn handle_request(
     info!("handle {:?} {:?}", method, uri);
     match (
         &method,
-        path.get(0),
+        path.first(),
         path.get(1),
         path.get(2),
         path.get(3),
@@ -671,7 +663,7 @@ fn handle_request(
 
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
             let start_height = start_height.and_then(|height| height.parse::<usize>().ok());
-            blocks(&query, &config, start_height)
+            blocks(query, config, start_height)
         }
         (&Method::GET, Some(&"block-height"), Some(height), None, None, None) => {
             let height = height.parse::<usize>()?;
@@ -770,7 +762,7 @@ fn handle_request(
                 .take(CHAIN_TXS_PER_PAGE)
                 .map(|txid| {
                     query
-                        .lookup_txn(&txid)
+                        .lookup_txn(txid)
                         .map(|tx| (tx, confirmed_blockid.clone()))
                         .ok_or_else(|| "missing tx".to_string())
                 })
@@ -1051,7 +1043,7 @@ fn handle_request(
                 spend
                     .status
                     .as_ref()
-                    .and_then(|ref status| status.block_height),
+                    .and_then(|status| status.block_height),
                 query,
             );
             json_response(spend, ttl)

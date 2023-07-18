@@ -64,7 +64,7 @@ fn to_scripthash(script_type: &str, script_str: &str) -> Result<FullHash> {
 
 fn address_to_scripthash(addr: &str) -> Result<FullHash> {
     let addr = Address::from_str(addr).chain_err(|| "invalid address")?;
-    Ok(compute_script_hash(&addr.script_pubkey().as_bytes()))
+    Ok(compute_script_hash(addr.script_pubkey().as_bytes()))
 }
 
 pub fn compute_script_hash(data: &[u8]) -> FullHash {

@@ -60,7 +60,7 @@ fn main() {
             break;
         }
 
-        let tx: Transaction = deserialize(&value).expect("failed to parse Transaction");
+        let tx: Transaction = deserialize(value).expect("failed to parse Transaction");
         let txid = tx.txid();
 
         iter.next();

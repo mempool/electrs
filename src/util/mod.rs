@@ -125,7 +125,7 @@ pub fn create_socket(addr: &SocketAddr) -> Socket {
         .set_reuse_port(true)
         .expect("cannot enable SO_REUSEPORT");
 
-    socket.bind(&addr.clone().into()).expect("cannot bind");
+    socket.bind(&(*addr).into()).expect("cannot bind");
 
     socket
 }
@@ -146,7 +146,7 @@ pub mod serde_hex {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
         let hex_str: String = ::serde::Deserialize::deserialize(d)?;
-        Ok(FromHex::from_hex(&hex_str).map_err(D::Error::custom)?)
+        FromHex::from_hex(&hex_str).map_err(D::Error::custom)
     }
 
     pub mod opt {

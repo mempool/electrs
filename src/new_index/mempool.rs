@@ -141,7 +141,7 @@ impl Mempool {
     ) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["history"]).start_timer();
         self.history.get(scripthash).map_or_else(
-            || vec![],
+            std::vec::Vec::new,
             |entries| self._history(entries, last_seen_txid, limit),
         )
     }
@@ -343,7 +343,7 @@ impl Mempool {
 
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) -> Result<()> {
         if self.txstore.get(txid).is_none() {
-            if let Ok(tx) = daemon.getmempooltx(&txid) {
+            if let Ok(tx) = daemon.getmempooltx(txid) {
                 self.add(vec![tx])?;
             }
         }
@@ -376,10 +376,10 @@ impl Mempool {
         for txid in txids {
             let tx = self.txstore.get(&txid).expect("missing mempool tx");
             let txid_bytes = full_hash(&txid[..]);
-            let prevouts = extract_tx_prevouts(&tx, &txos, false)?;
+            let prevouts = extract_tx_prevouts(tx, &txos, false)?;
 
             // Get feeinfo for caching and recent tx overview
-            let feeinfo = TxFeeInfo::new(&tx, &prevouts, self.config.network_type);
+            let feeinfo = TxFeeInfo::new(tx, &prevouts, self.config.network_type);
 
             // recent is an ArrayDeque that automatically evicts the oldest elements
             self.recent.push_front(TxOverview {

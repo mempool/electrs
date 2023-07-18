@@ -249,7 +249,7 @@ impl Indexer {
 
     fn get_new_headers(&self, daemon: &Daemon, tip: &BlockHash) -> Result<Vec<HeaderEntry>> {
         let headers = self.store.indexed_headers.read().unwrap();
-        let new_headers = daemon.get_new_headers(&headers, &tip)?;
+        let new_headers = daemon.get_new_headers(&headers, tip)?;
         let result = headers.order(new_headers);
 
         if let Some(tip) = result.last() {
@@ -428,7 +428,7 @@ impl ChainQuery {
 
     pub fn get_block_header(&self, hash: &BlockHash) -> Option<BlockHeader> {
         let _timer = self.start_timer("get_block_header");
-        Some(self.header_by_hash(hash)?.header().clone())
+        Some(*self.header_by_hash(hash)?.header())
     }
 
     pub fn get_mtp(&self, height: usize) -> u32 {
@@ -448,14 +448,14 @@ impl ChainQuery {
 
     pub fn history_iter_scan(&self, code: u8, hash: &[u8], start_height: usize) -> ScanIterator {
         self.store.history_db.iter_scan_from(
-            &TxHistoryRow::filter(code, &hash[..]),
-            &TxHistoryRow::prefix_height(code, &hash[..], start_height as u32),
+            &TxHistoryRow::filter(code, hash),
+            &TxHistoryRow::prefix_height(code, hash, start_height as u32),
         )
     }
     fn history_iter_scan_reverse(&self, code: u8, hash: &[u8]) -> ReverseScanIterator {
         self.store.history_db.iter_scan_reverse(
-            &TxHistoryRow::filter(code, &hash[..]),
-            &TxHistoryRow::prefix_end(code, &hash[..]),
+            &TxHistoryRow::filter(code, hash),
+            &TxHistoryRow::prefix_end(code, hash),
         )
     }
 
@@ -839,7 +839,7 @@ impl ChainQuery {
         if self.light_mode {
             let queried_blockhash =
                 blockhash.map_or_else(|| self.tx_confirming_block(txid).map(|b| b.hash), |_| None);
-            let blockhash = blockhash.or_else(|| queried_blockhash.as_ref())?;
+            let blockhash = blockhash.or(queried_blockhash.as_ref())?;
             // TODO fetch transaction as binary from REST API instead of as hex
             let txhex = self
                 .daemon
@@ -870,7 +870,7 @@ impl ChainQuery {
         let _timer = self.start_timer("lookup_spend");
         self.store
             .history_db
-            .iter_scan(&TxEdgeRow::filter(&outpoint))
+            .iter_scan(&TxEdgeRow::filter(outpoint))
             .map(TxEdgeRow::from_row)
             .find_map(|edge| {
                 let txid: Txid = deserialize(&edge.key.spending_txid).unwrap();
@@ -989,7 +989,7 @@ fn add_blocks(block_entries: &[BlockEntry], iconfig: &IndexerConfig) -> Vec<DBRo
                 rows.push(BlockRow::new_meta(blockhash, &BlockMeta::from(b)).into_row());
             }
 
-            rows.push(BlockRow::new_header(&b).into_row());
+            rows.push(BlockRow::new_header(b).into_row());
             rows.push(BlockRow::new_done(blockhash).into_row()); // mark block as "added"
             rows
         })
@@ -1044,7 +1044,7 @@ fn lookup_txos(
         outpoints
             .par_iter()
             .filter_map(|outpoint| {
-                lookup_txo(&txstore_db, &outpoint)
+                lookup_txo(txstore_db, outpoint)
                     .or_else(|| {
                         if !allow_missing {
                             panic!("missing txo {} in {:?}", outpoint, txstore_db);
@@ -1059,7 +1059,7 @@ fn lookup_txos(
 
 fn lookup_txo(txstore_db: &DB, outpoint: &OutPoint) -> Option<TxOut> {
     txstore_db
-        .get(&TxOutRow::key(&outpoint))
+        .get(&TxOutRow::key(outpoint))
         .map(|val| deserialize(&val).expect("failed to parse TxOut"))
 }
 
@@ -1435,7 +1435,7 @@ impl TxHistoryRow {
     fn new(script: &Script, confirmed_height: u32, txinfo: TxHistoryInfo) -> Self {
         let key = TxHistoryKey {
             code: b'H',
-            hash: compute_script_hash(&script),
+            hash: compute_script_hash(script),
             confirmed_height,
             txinfo,
         };
@@ -1447,13 +1447,13 @@ impl TxHistoryRow {
     }
 
     fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
-        bincode::serialize(&(code, full_hash(&hash[..]), std::u32::MAX)).unwrap()
+        bincode::serialize(&(code, full_hash(hash), std::u32::MAX)).unwrap()
     }
 
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
         bincode::options()
             .with_big_endian()
-            .serialize(&(code, full_hash(&hash[..]), height))
+            .serialize(&(code, full_hash(hash), height))
             .unwrap()
     }
 
