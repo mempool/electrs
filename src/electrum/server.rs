@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
-use sha2::{Digest, Sha256};
 use error_chain::ChainedError;
 use hex;
 use serde_json::{from_str, Value};
+use sha2::{Digest, Sha256};
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode::serialize;
@@ -85,7 +85,11 @@ fn get_status_hash(txs: Vec<(Txid, Option<BlockId>)>, query: &Query) -> Option<F
             let part = format!("{}:{}:", txid, height);
             hasher.update(part.as_bytes());
         }
-        Some(hasher.finalize()[..].try_into().expect("SHA256 size is 32 bytes"))
+        Some(
+            hasher.finalize()[..]
+                .try_into()
+                .expect("SHA256 size is 32 bytes"),
+        )
     }
 }
 

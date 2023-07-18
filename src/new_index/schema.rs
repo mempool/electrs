@@ -3,9 +3,9 @@ use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
 use bitcoin::util::merkleblock::MerkleBlock;
 use bitcoin::VarInt;
-use sha2::{Digest, Sha256};
 use itertools::Itertools;
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode::{deserialize, serialize};
@@ -1175,7 +1175,9 @@ pub type FullHash = [u8; 32]; // serialized SHA256 result
 pub fn compute_script_hash(script: &Script) -> FullHash {
     let mut hasher = Sha256::new();
     hasher.update(script.as_bytes());
-    hasher.finalize()[..].try_into().expect("SHA256 size is 32 bytes")
+    hasher.finalize()[..]
+        .try_into()
+        .expect("SHA256 size is 32 bytes")
 }
 
 pub fn parse_hash(hash: &FullHash) -> Sha256dHash {
@@ -1457,7 +1459,10 @@ impl TxHistoryRow {
 
     pub fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::options().with_big_endian().serialize(&self.key).unwrap(),
+            key: bincode::options()
+                .with_big_endian()
+                .serialize(&self.key)
+                .unwrap(),
             value: vec![],
         }
     }

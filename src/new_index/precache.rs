@@ -3,8 +3,8 @@ use crate::errors::*;
 use crate::new_index::ChainQuery;
 use crate::util::{full_hash, FullHash};
 
-use sha2::{Digest, Sha256};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 use hex;
 use std::convert::TryInto;
@@ -70,5 +70,7 @@ fn address_to_scripthash(addr: &str) -> Result<FullHash> {
 pub fn compute_script_hash(data: &[u8]) -> FullHash {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    hasher.finalize()[..].try_into().expect("SHA256 size is 32 bytes")
+    hasher.finalize()[..]
+        .try_into()
+        .expect("SHA256 size is 32 bytes")
 }
