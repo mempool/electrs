@@ -14,13 +14,18 @@ use crate::errors::*;
 #[cfg(feature = "liquid")]
 use bitcoin::Network as BNetwork;
 
+pub(crate) const APP_NAME: &str = "mempool-electrs";
 pub(crate) const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub(crate) const GIT_HASH: &str = match option_env!("GIT_HASH") {
-    Some(s) => s,
-    None => "xxxxxxx",
-};
+pub(crate) const GIT_HASH: Option<&str> = option_env!("GIT_HASH");
+
 lazy_static!(
-    pub(crate) static ref VERSION_STRING: String = format!("mempool-electrs {}-{}", ELECTRS_VERSION, GIT_HASH);
+    pub(crate) static ref VERSION_STRING: String = {
+        if let Some(hash) = GIT_HASH {
+            format!("{} {}-{}", APP_NAME, ELECTRS_VERSION, hash)
+        } else {
+            format!("{} {}", APP_NAME, ELECTRS_VERSION)
+        }
+    };
 );
 
 #[derive(Debug, Clone)]
