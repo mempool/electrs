@@ -16,6 +16,7 @@ default = [ "rocksdb" ]
 liquid = [ "elements" ]
 electrum-discovery = [ "electrum-client"]
 oldcpu = [ "rocksdb-oldcpu" ]
+version-api = []
 
 [dependencies]
 arraydeque = "0.4"

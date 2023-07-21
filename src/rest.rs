@@ -1,5 +1,5 @@
 use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
-use crate::config::Config;
+use crate::config::{Config, VERSION_STRING};
 use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
@@ -657,6 +657,15 @@ fn handle_request(
         path.get(3),
         path.get(4),
     ) {
+        // Useful for getting the version from a running electrs
+        // Must add the `version-api` feature when compiling.
+        #[cfg(feature = "version-api")]
+        (&Method::GET, Some(&"internal"), Some(&"version"), None, None, None) => http_message(
+            StatusCode::OK,
+            VERSION_STRING.as_str(),
+            TTL_SHORT,
+        ),
+
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_hash().to_hex(),

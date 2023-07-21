@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use electrum_client::ElectrumApi;
 
 use crate::chain::Network;
+use crate::config::VERSION_STRING;
 use crate::electrum::{Client, Hostname, Port, ProtocolVersion, ServerFeatures};
 use crate::errors::{Result, ResultExt};
 use crate::util::spawn_thread;
@@ -533,7 +534,7 @@ mod tests {
 
         let features = ServerFeatures {
             hosts: serde_json::from_str("{\"test.foobar.example\":{\"tcp_port\":60002}}").unwrap(),
-            server_version: format!("electrs-esplora 9"),
+            server_version: VERSION_STRING.clone(),
             genesis_hash: genesis_hash(Network::Testnet),
             protocol_min: PROTOCOL_VERSION,
             protocol_max: PROTOCOL_VERSION,
