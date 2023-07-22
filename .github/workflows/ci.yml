@@ -5,7 +5,7 @@ on:
       - mempool
 
 
-name: Check and Lint
+name: Compile Check and Lint
 
 jobs:
   check:
@@ -40,6 +40,9 @@ jobs:
     name: Linter
     runs-on: ubuntu-latest
     needs: [check]
+    strategy:
+      matrix: # Try all combinations of features. Some times weird things appear.
+        features: ['', '-F electrum-discovery', '-F liquid', '-F electrum-discovery,liquid']
     steps:
       - uses: actions/checkout@v3
       - id: toolchain
@@ -54,4 +57,5 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo clippy --all-features
+      - name: Clippy with Features = ${{ matrix.features }}
+        run: cargo clippy ${{ matrix.features }}
