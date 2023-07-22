@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Lines, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -270,8 +270,8 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(
-        daemon_dir: &Path,
-        blocks_dir: &Path,
+        daemon_dir: PathBuf,
+        blocks_dir: PathBuf,
         daemon_rpc_addr: SocketAddr,
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
@@ -279,8 +279,8 @@ impl Daemon {
         metrics: &Metrics,
     ) -> Result<Daemon> {
         let daemon = Daemon {
-            daemon_dir: daemon_dir.to_owned(),
-            blocks_dir: blocks_dir.to_owned(),
+            daemon_dir,
+            blocks_dir,
             network,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
