@@ -80,6 +80,7 @@ struct HealthCheck {
     hostname: Hostname,
     service: Service,
     is_default: bool,
+    #[allow(dead_code)]
     added_by: Option<IpAddr>,
     last_check: Option<Instant>,
     last_healthy: Option<Instant>,

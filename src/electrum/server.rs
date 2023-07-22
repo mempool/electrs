@@ -438,7 +438,7 @@ impl Connection {
             #[cfg(feature = "electrum-discovery")]
             "server.features" => self.server_features(),
             #[cfg(feature = "electrum-discovery")]
-            "server.add_peer" => self.server_add_peer(&params),
+            "server.add_peer" => self.server_add_peer(params),
 
             &_ => bail!("unknown method {} {:?}", method, params),
         };

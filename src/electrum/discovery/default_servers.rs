@@ -1,7 +1,7 @@
 use crate::chain::Network;
-use crate::electrum::discovery::{DiscoveryManager, Service};
+use crate::electrum::discovery::DiscoveryManager;
 
-pub fn add_default_servers(discovery: &DiscoveryManager, network: Network) {
+pub fn add_default_servers(_discovery: &DiscoveryManager, network: Network) {
     match network {
         #[cfg(not(feature = "liquid"))]
         Network::Bitcoin => {
