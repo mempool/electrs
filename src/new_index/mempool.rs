@@ -289,6 +289,12 @@ impl Mempool {
         self.txstore.keys().collect()
     }
 
+    // Get all txs in the mempool
+    pub fn txs(&self) -> Vec<Transaction> {
+        let _timer = self.latency.with_label_values(&["txs"]).start_timer();
+        self.txstore.values().cloned().collect()
+    }
+
     // Get an overview of the most recent transactions
     pub fn recent_txs_overview(&self) -> Vec<&TxOverview> {
         // We don't bother ever deleting elements from the recent list.

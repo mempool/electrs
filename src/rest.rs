@@ -1083,6 +1083,16 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+            let txs = query
+                .mempool()
+                .txs()
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
             let recent = mempool.recent_txs_overview();
