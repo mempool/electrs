@@ -89,6 +89,7 @@ pub fn get_innerscripts(txin: &TxIn, prevout: &TxOut) -> InnerScripts {
                 .filter(|&script_pos_from_last| w_len >= script_pos_from_last)
                 .and_then(|script_pos_from_last| {
                     // Can't use second_to_last() since it might be 3rd to last
+                    #[allow(clippy::iter_nth)]
                     witness.iter().nth(w_len - script_pos_from_last)
                 })
         } else {

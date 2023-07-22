@@ -414,7 +414,8 @@ impl ChainQuery {
 
     pub fn get_block_header(&self, hash: &BlockHash) -> Option<BlockHeader> {
         let _timer = self.start_timer("get_block_header");
-        Some(*self.header_by_hash(hash)?.header())
+        #[allow(clippy::clone_on_copy)]
+        Some(self.header_by_hash(hash)?.header().clone())
     }
 
     pub fn get_mtp(&self, height: usize) -> u32 {

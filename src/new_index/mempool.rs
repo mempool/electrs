@@ -441,7 +441,7 @@ impl Mempool {
             // Index issued assets & native asset pegins/pegouts/burns
             #[cfg(feature = "liquid")]
             asset::index_mempool_tx_assets(
-                &tx,
+                tx,
                 self.config.network_type,
                 self.config.parent_network,
                 &mut self.asset_history,
@@ -543,7 +543,9 @@ impl Mempool {
             .start_timer();
         self.asset_history
             .get(asset_id)
-            .map_or_else(|| vec![], |entries| self._history(entries, None, limit))
+            .map_or_else(std::vec::Vec::new, |entries| {
+                self._history(entries, None, limit)
+            })
     }
 }
 

@@ -86,7 +86,12 @@ impl BlockValue {
         BlockValue {
             id: header.block_hash().to_hex(),
             height: blockhm.header_entry.height() as u32,
-            version: header.version as u32,
+            version: {
+                #[allow(clippy::unnecessary_cast)]
+                {
+                    header.version as u32
+                }
+            },
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
@@ -153,6 +158,7 @@ impl TransactionValue {
 
         TransactionValue {
             txid: tx.txid(),
+            #[allow(clippy::unnecessary_cast)]
             version: tx.version as u32,
             locktime: tx.lock_time,
             vin: vins,
