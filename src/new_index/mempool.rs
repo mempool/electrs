@@ -6,10 +6,11 @@ use bitcoin::consensus::encode::serialize;
 #[cfg(feature = "liquid")]
 use elements::{encode::serialize, AssetId};
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, BTreeMap, HashMap, HashSet};
 use std::iter::FromIterator;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::ops::Bound::{Excluded, Unbounded};
 
 use crate::chain::{deserialize, Network, OutPoint, Transaction, TxOut, Txid};
 use crate::config::Config;
@@ -29,7 +30,7 @@ use crate::elements::asset;
 pub struct Mempool {
     chain: Arc<ChainQuery>,
     config: Arc<Config>,
-    txstore: HashMap<Txid, Transaction>,
+    txstore: BTreeMap<Txid, Transaction>,
     feeinfo: HashMap<Txid, TxFeeInfo>,
     history: HashMap<FullHash, Vec<TxHistoryInfo>>, // ScriptHash -> {history_entries}
     edges: HashMap<OutPoint, (Txid, u32)>,          // OutPoint -> (spending_txid, spending_vin)
@@ -62,7 +63,7 @@ impl Mempool {
     pub fn new(chain: Arc<ChainQuery>, metrics: &Metrics, config: Arc<Config>) -> Self {
         Mempool {
             chain,
-            txstore: HashMap::new(),
+            txstore: BTreeMap::new(),
             feeinfo: HashMap::new(),
             history: HashMap::new(),
             edges: HashMap::new(),
@@ -293,6 +294,27 @@ impl Mempool {
     pub fn txs(&self) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["txs"]).start_timer();
         self.txstore.values().cloned().collect()
+    }
+
+    // Get n txs after the given txid in the mempool
+    pub fn txs_page(&self, n: usize, start: Option<Txid>) -> Vec<Transaction> {
+        let _timer = self.latency.with_label_values(&["txs"]).start_timer();
+        let mut page = Vec::with_capacity(n);
+        let start_bound = match start {
+            Some(txid) => Excluded(txid),
+            None => Unbounded
+        };
+
+        let mut iter = self.txstore.range((start_bound, Unbounded)).peekable();
+        for _ in 0..n {
+            if let Some((_, value)) = iter.next() {
+                page.push(value.clone());
+            } else {
+                break;
+            }
+        }
+
+        page
     }
 
     // Get an overview of the most recent transactions
