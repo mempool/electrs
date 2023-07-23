@@ -305,14 +305,11 @@ impl Mempool {
             None => Unbounded
         };
 
-        let mut iter = self.txstore.range((start_bound, Unbounded)).peekable();
-        for _ in 0..n {
-            if let Some((_, value)) = iter.next() {
+        self.txstore.range((start_bound, Unbounded))
+            .take(n)
+            .for_each(|(_, value)| {
                 page.push(value.clone());
-            } else {
-                break;
-            }
-        }
+            });
 
         page
     }
