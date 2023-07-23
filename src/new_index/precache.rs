@@ -3,11 +3,11 @@ use crate::errors::*;
 use crate::new_index::ChainQuery;
 use crate::util::{full_hash, FullHash};
 
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 use hex;
+use std::convert::TryInto;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
@@ -64,13 +64,13 @@ fn to_scripthash(script_type: &str, script_str: &str) -> Result<FullHash> {
 
 fn address_to_scripthash(addr: &str) -> Result<FullHash> {
     let addr = Address::from_str(addr).chain_err(|| "invalid address")?;
-    Ok(compute_script_hash(&addr.script_pubkey().as_bytes()))
+    Ok(compute_script_hash(addr.script_pubkey().as_bytes()))
 }
 
 pub fn compute_script_hash(data: &[u8]) -> FullHash {
-    let mut hash = FullHash::default();
-    let mut sha2 = Sha256::new();
-    sha2.input(data);
-    sha2.result(&mut hash);
-    hash
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize()[..]
+        .try_into()
+        .expect("SHA256 size is 32 bytes")
 }

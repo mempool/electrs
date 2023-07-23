@@ -232,7 +232,7 @@ impl Query {
 
     #[cfg(feature = "liquid")]
     pub fn lookup_asset(&self, asset_id: &AssetId) -> Result<Option<LiquidAsset>> {
-        lookup_asset(&self, self.asset_db.as_ref(), asset_id, None)
+        lookup_asset(self, self.asset_db.as_ref(), asset_id, None)
     }
 
     #[cfg(feature = "liquid")]
@@ -251,8 +251,8 @@ impl Query {
         let results = results
             .into_iter()
             .map(|(asset_id, metadata)| {
-                Ok(lookup_asset(&self, None, asset_id, Some(metadata))?
-                    .chain_err(|| "missing registered asset")?)
+                lookup_asset(self, None, asset_id, Some(metadata))?
+                    .chain_err(|| "missing registered asset")
             })
             .collect::<Result<Vec<_>>>()?;
         Ok((total_num, results))

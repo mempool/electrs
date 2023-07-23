@@ -12,7 +12,7 @@ pub struct InnerScripts {
 pub trait ScriptToAsm: std::fmt::Debug {
     fn to_asm(&self) -> String {
         let asm = format!("{:?}", self);
-        (&asm[7..asm.len() - 1]).to_string()
+        asm[7..asm.len() - 1].to_string()
     }
 }
 impl ScriptToAsm for bitcoin::Script {}
@@ -76,7 +76,7 @@ pub fn get_innerscripts(txin: &TxIn, prevout: &TxOut) -> InnerScripts {
                     // If there are at least two witness elements, and the first byte of
                     // the last element is 0x50, this last element is called annex a
                     // and is removed from the witness stack.
-                    if w_len >= 2 && last_elem.get(0).filter(|&&v| v == 0x50).is_some() {
+                    if w_len >= 2 && last_elem.first().filter(|&&v| v == 0x50).is_some() {
                         // account for the extra item removed from the end
                         3
                     } else {
@@ -87,11 +87,11 @@ pub fn get_innerscripts(txin: &TxIn, prevout: &TxOut) -> InnerScripts {
                 // Convert to None if not script spend
                 // Note: Option doesn't have filter_map() method
                 .filter(|&script_pos_from_last| w_len >= script_pos_from_last)
-                .map(|script_pos_from_last| {
+                .and_then(|script_pos_from_last| {
                     // Can't use second_to_last() since it might be 3rd to last
+                    #[allow(clippy::iter_nth)]
                     witness.iter().nth(w_len - script_pos_from_last)
                 })
-                .flatten()
         } else {
             witness.last()
         };

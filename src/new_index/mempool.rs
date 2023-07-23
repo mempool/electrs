@@ -1,4 +1,4 @@
-use arraydeque::{ArrayDeque, Wrapping};
+use bounded_vec_deque::BoundedVecDeque;
 use itertools::Itertools;
 
 #[cfg(not(feature = "liquid"))]
@@ -26,9 +26,6 @@ use crate::util::{extract_tx_prevouts, full_hash, has_prevout, is_spendable, Byt
 #[cfg(feature = "liquid")]
 use crate::elements::asset;
 
-const RECENT_TXS_SIZE: usize = 10;
-const BACKLOG_STATS_TTL: u64 = 10;
-
 pub struct Mempool {
     chain: Arc<ChainQuery>,
     config: Arc<Config>,
@@ -36,7 +33,7 @@ pub struct Mempool {
     feeinfo: HashMap<Txid, TxFeeInfo>,
     history: HashMap<FullHash, Vec<TxHistoryInfo>>, // ScriptHash -> {history_entries}
     edges: HashMap<OutPoint, (Txid, u32)>,          // OutPoint -> (spending_txid, spending_vin)
-    recent: ArrayDeque<[TxOverview; RECENT_TXS_SIZE], Wrapping>, // The N most recent txs to enter the mempool
+    recent: BoundedVecDeque<TxOverview>,            // The N most recent txs to enter the mempool
     backlog_stats: (BacklogStats, Instant),
 
     // monitoring
@@ -65,15 +62,14 @@ impl Mempool {
     pub fn new(chain: Arc<ChainQuery>, metrics: &Metrics, config: Arc<Config>) -> Self {
         Mempool {
             chain,
-            config,
             txstore: HashMap::new(),
             feeinfo: HashMap::new(),
             history: HashMap::new(),
             edges: HashMap::new(),
-            recent: ArrayDeque::new(),
+            recent: BoundedVecDeque::new(config.mempool_recent_txs_size),
             backlog_stats: (
                 BacklogStats::default(),
-                Instant::now() - Duration::from_secs(BACKLOG_STATS_TTL),
+                Instant::now() - Duration::from_secs(config.mempool_backlog_stats_ttl),
             ),
             latency: metrics.histogram_vec(
                 HistogramOpts::new("mempool_latency", "Mempool requests latency (in seconds)"),
@@ -92,6 +88,7 @@ impl Mempool {
             asset_history: HashMap::new(),
             #[cfg(feature = "liquid")]
             asset_issuance: HashMap::new(),
+            config,
         }
     }
 
@@ -140,10 +137,11 @@ impl Mempool {
         limit: usize,
     ) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["history"]).start_timer();
-        self.history.get(scripthash).map_or_else(
-            || vec![],
-            |entries| self._history(entries, last_seen_txid, limit),
-        )
+        self.history
+            .get(scripthash)
+            .map_or_else(std::vec::Vec::new, |entries| {
+                self._history(entries, last_seen_txid, limit)
+            })
     }
 
     pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {
@@ -330,7 +328,9 @@ impl Mempool {
             .set(self.txstore.len() as f64);
 
         // Update cached backlog stats (if expired)
-        if self.backlog_stats.1.elapsed() > Duration::from_secs(BACKLOG_STATS_TTL) {
+        if self.backlog_stats.1.elapsed()
+            > Duration::from_secs(self.config.mempool_backlog_stats_ttl)
+        {
             let _timer = self
                 .latency
                 .with_label_values(&["update_backlog_stats"])
@@ -343,7 +343,7 @@ impl Mempool {
 
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) -> Result<()> {
         if self.txstore.get(txid).is_none() {
-            if let Ok(tx) = daemon.getmempooltx(&txid) {
+            if let Ok(tx) = daemon.getmempooltx(txid) {
                 self.add(vec![tx])?;
             }
         }
@@ -376,12 +376,12 @@ impl Mempool {
         for txid in txids {
             let tx = self.txstore.get(&txid).expect("missing mempool tx");
             let txid_bytes = full_hash(&txid[..]);
-            let prevouts = extract_tx_prevouts(&tx, &txos, false)?;
+            let prevouts = extract_tx_prevouts(tx, &txos, false)?;
 
             // Get feeinfo for caching and recent tx overview
-            let feeinfo = TxFeeInfo::new(&tx, &prevouts, self.config.network_type);
+            let feeinfo = TxFeeInfo::new(tx, &prevouts, self.config.network_type);
 
-            // recent is an ArrayDeque that automatically evicts the oldest elements
+            // recent is an BoundedVecDeque that automatically evicts the oldest elements
             self.recent.push_front(TxOverview {
                 txid,
                 fee: feeinfo.fee,
@@ -440,7 +440,7 @@ impl Mempool {
             // Index issued assets & native asset pegins/pegouts/burns
             #[cfg(feature = "liquid")]
             asset::index_mempool_tx_assets(
-                &tx,
+                tx,
                 self.config.network_type,
                 self.config.parent_network,
                 &mut self.asset_history,
@@ -542,7 +542,9 @@ impl Mempool {
             .start_timer();
         self.asset_history
             .get(asset_id)
-            .map_or_else(|| vec![], |entries| self._history(entries, None, limit))
+            .map_or_else(std::vec::Vec::new, |entries| {
+                self._history(entries, None, limit)
+            })
     }
 }
 

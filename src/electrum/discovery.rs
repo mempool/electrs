@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use electrum_client::ElectrumApi;
 
 use crate::chain::Network;
-use crate::config::VERSION_STRING;
 use crate::electrum::{Client, Hostname, Port, ProtocolVersion, ServerFeatures};
 use crate::errors::{Result, ResultExt};
 use crate::util::spawn_thread;
@@ -81,6 +80,7 @@ struct HealthCheck {
     hostname: Hostname,
     service: Service,
     is_default: bool,
+    #[allow(dead_code)]
     added_by: Option<IpAddr>,
     last_check: Option<Instant>,
     last_healthy: Option<Instant>,
@@ -526,6 +526,8 @@ mod tests {
     use crate::chain::Network;
     use std::time;
 
+    use crate::config::VERSION_STRING;
+
     const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(1, 4);
 
     #[test]
@@ -548,23 +550,33 @@ mod tests {
             false,
             None,
         ));
-        discovery.add_default_server(
-            "electrum.blockstream.info".into(),
-            vec![Service::Tcp(60001)],
-        ).unwrap();
-        discovery.add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)]).unwrap();
-        discovery.add_default_server(
-            "tn.not.fyi".into(),
-            vec![Service::Tcp(55001), Service::Ssl(55002)],
-        ).unwrap();
-        discovery.add_default_server(
-            "electrum.blockstream.info".into(),
-            vec![Service::Tcp(60001), Service::Ssl(60002)],
-        ).unwrap();
-        discovery.add_default_server(
-            "explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion".into(),
-            vec![Service::Tcp(143)],
-        ).unwrap();
+        discovery
+            .add_default_server(
+                "electrum.blockstream.info".into(),
+                vec![Service::Tcp(60001)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)])
+            .unwrap();
+        discovery
+            .add_default_server(
+                "tn.not.fyi".into(),
+                vec![Service::Tcp(55001), Service::Ssl(55002)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server(
+                "electrum.blockstream.info".into(),
+                vec![Service::Tcp(60001), Service::Ssl(60002)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server(
+                "explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion".into(),
+                vec![Service::Tcp(143)],
+            )
+            .unwrap();
 
         debug!("{:#?}", discovery);
 
