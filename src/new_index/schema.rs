@@ -1440,6 +1440,7 @@ impl TxHistoryRow {
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
         bincode::options()
             .with_big_endian()
+            .with_fixint_encoding()
             .serialize(&(code, full_hash(hash), height))
             .unwrap()
     }
@@ -1448,6 +1449,7 @@ impl TxHistoryRow {
         DBRow {
             key: bincode::options()
                 .with_big_endian()
+                .with_fixint_encoding()
                 .serialize(&self.key)
                 .unwrap(),
             value: vec![],
@@ -1457,6 +1459,7 @@ impl TxHistoryRow {
     pub fn from_row(row: DBRow) -> Self {
         let key = bincode::options()
             .with_big_endian()
+            .with_fixint_encoding()
             .deserialize(&row.key)
             .expect("failed to deserialize TxHistoryKey");
         TxHistoryRow { key }
