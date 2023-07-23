@@ -6,11 +6,11 @@ use bitcoin::consensus::encode::serialize;
 #[cfg(feature = "liquid")]
 use elements::{encode::serialize, AssetId};
 
-use std::collections::{BTreeSet, BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::iter::FromIterator;
+use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::ops::Bound::{Excluded, Unbounded};
 
 use crate::chain::{deserialize, Network, OutPoint, Transaction, TxOut, Txid};
 use crate::config::Config;
@@ -302,10 +302,11 @@ impl Mempool {
         let mut page = Vec::with_capacity(n);
         let start_bound = match start {
             Some(txid) => Excluded(txid),
-            None => Unbounded
+            None => Unbounded,
         };
 
-        self.txstore.range((start_bound, Unbounded))
+        self.txstore
+            .range((start_bound, Unbounded))
             .take(n)
             .for_each(|(_, value)| {
                 page.push(value.clone());
