@@ -1,4 +1,4 @@
-use arraydeque::{ArrayDeque, Wrapping};
+use bounded_vec_deque::BoundedVecDeque;
 use itertools::Itertools;
 
 #[cfg(not(feature = "liquid"))]
@@ -26,9 +26,6 @@ use crate::util::{extract_tx_prevouts, full_hash, has_prevout, is_spendable, Byt
 #[cfg(feature = "liquid")]
 use crate::elements::asset;
 
-const RECENT_TXS_SIZE: usize = 10;
-const BACKLOG_STATS_TTL: u64 = 10;
-
 pub struct Mempool {
     chain: Arc<ChainQuery>,
     config: Arc<Config>,
@@ -36,7 +33,7 @@ pub struct Mempool {
     feeinfo: HashMap<Txid, TxFeeInfo>,
     history: HashMap<FullHash, Vec<TxHistoryInfo>>, // ScriptHash -> {history_entries}
     edges: HashMap<OutPoint, (Txid, u32)>,          // OutPoint -> (spending_txid, spending_vin)
-    recent: ArrayDeque<[TxOverview; RECENT_TXS_SIZE], Wrapping>, // The N most recent txs to enter the mempool
+    recent: BoundedVecDeque<TxOverview>,            // The N most recent txs to enter the mempool
     backlog_stats: (BacklogStats, Instant),
 
     // monitoring
@@ -65,15 +62,14 @@ impl Mempool {
     pub fn new(chain: Arc<ChainQuery>, metrics: &Metrics, config: Arc<Config>) -> Self {
         Mempool {
             chain,
-            config,
             txstore: HashMap::new(),
             feeinfo: HashMap::new(),
             history: HashMap::new(),
             edges: HashMap::new(),
-            recent: ArrayDeque::new(),
+            recent: BoundedVecDeque::new(config.mempool_recent_txs_size),
             backlog_stats: (
                 BacklogStats::default(),
-                Instant::now() - Duration::from_secs(BACKLOG_STATS_TTL),
+                Instant::now() - Duration::from_secs(config.mempool_backlog_stats_ttl),
             ),
             latency: metrics.histogram_vec(
                 HistogramOpts::new("mempool_latency", "Mempool requests latency (in seconds)"),
@@ -92,6 +88,7 @@ impl Mempool {
             asset_history: HashMap::new(),
             #[cfg(feature = "liquid")]
             asset_issuance: HashMap::new(),
+            config,
         }
     }
 
@@ -330,7 +327,9 @@ impl Mempool {
             .set(self.txstore.len() as f64);
 
         // Update cached backlog stats (if expired)
-        if self.backlog_stats.1.elapsed() > Duration::from_secs(BACKLOG_STATS_TTL) {
+        if self.backlog_stats.1.elapsed()
+            > Duration::from_secs(self.config.mempool_backlog_stats_ttl)
+        {
             let _timer = self
                 .latency
                 .with_label_values(&["update_backlog_stats"])
@@ -381,7 +380,7 @@ impl Mempool {
             // Get feeinfo for caching and recent tx overview
             let feeinfo = TxFeeInfo::new(&tx, &prevouts, self.config.network_type);
 
-            // recent is an ArrayDeque that automatically evicts the oldest elements
+            // recent is an BoundedVecDeque that automatically evicts the oldest elements
             self.recent.push_front(TxOverview {
                 txid,
                 fee: feeinfo.fee,
