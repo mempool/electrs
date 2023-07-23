@@ -25,12 +25,12 @@ fn main() {
 
         let entry: TxHistoryKey = bincode::options()
             .with_big_endian()
-            .deserialize(&key)
+            .deserialize(key)
             .expect("failed to deserialize TxHistoryKey");
 
         if curr_scripthash != entry.hash {
             if total_entries > 100 {
-                println!("{} {}", hex::encode(&curr_scripthash), total_entries);
+                println!("{} {}", hex::encode(curr_scripthash), total_entries);
             }
 
             curr_scripthash = entry.hash;
@@ -45,7 +45,7 @@ fn main() {
     if total_entries >= 4000 {
         println!(
             "scripthash,{},{}",
-            hex::encode(&curr_scripthash),
+            hex::encode(curr_scripthash),
             total_entries
         );
     }

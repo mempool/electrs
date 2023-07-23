@@ -26,7 +26,7 @@ impl<'a> Iterator for ScanIterator<'a> {
         if self.done {
             return None;
         }
-        let (key, value) = self.iter.next()?;
+        let (key, value) = self.iter.next().map(Result::ok)??;
         if !key.starts_with(&self.prefix) {
             self.done = true;
             return None;
@@ -163,10 +163,7 @@ impl DB {
         rows.sort_unstable_by(|a, b| a.key.cmp(&b.key));
         let mut batch = rocksdb::WriteBatch::default();
         for row in rows {
-            #[cfg(not(feature = "oldcpu"))]
             batch.put(&row.key, &row.value);
-            #[cfg(feature = "oldcpu")]
-            batch.put(&row.key, &row.value).unwrap();
         }
         let do_flush = match flush {
             DBFlush::Enable => true,

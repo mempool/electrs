@@ -1,5 +1,5 @@
 use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
-use crate::config::Config;
+use crate::config::{Config, VERSION_STRING};
 use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
@@ -39,9 +39,6 @@ use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
 
-const CHAIN_TXS_PER_PAGE: usize = 25;
-const MAX_MEMPOOL_TXS: usize = 50;
-const BLOCK_LIMIT: usize = 10;
 const ADDRESS_SEARCH_LIMIT: usize = 10;
 
 #[cfg(feature = "liquid")]
@@ -86,7 +83,12 @@ impl BlockValue {
         BlockValue {
             id: header.block_hash().to_hex(),
             height: blockhm.header_entry.height() as u32,
-            version: header.version as u32,
+            version: {
+                #[allow(clippy::unnecessary_cast)]
+                {
+                    header.version as u32
+                }
+            },
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
@@ -134,7 +136,7 @@ impl TransactionValue {
         config: &Config,
     ) -> Self {
         let prevouts =
-            extract_tx_prevouts(&tx, &txos, true).expect("Cannot Err when allow_missing is true");
+            extract_tx_prevouts(&tx, txos, true).expect("Cannot Err when allow_missing is true");
         let vins: Vec<TxInValue> = tx
             .input
             .iter()
@@ -153,6 +155,7 @@ impl TransactionValue {
 
         TransactionValue {
             txid: tx.txid(),
+            #[allow(clippy::unnecessary_cast)]
             version: tx.version as u32,
             locktime: tx.lock_time,
             vin: vins,
@@ -201,9 +204,9 @@ impl TxInValue {
             None
         };
 
-        let is_coinbase = is_coinbase(&txin);
+        let is_coinbase = is_coinbase(txin);
 
-        let innerscripts = prevout.map(|prevout| get_innerscripts(&txin, &prevout));
+        let innerscripts = prevout.map(|prevout| get_innerscripts(txin, prevout));
 
         TxInValue {
             txid: txin.previous_output.txid,
@@ -464,7 +467,7 @@ impl From<Utxo> for UtxoValue {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct SpendingValue {
     spent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -481,16 +484,6 @@ impl From<SpendingInput> for SpendingValue {
             txid: Some(spend.txid),
             vin: Some(spend.vin),
             status: Some(TransactionStatus::from(spend.confirmed)),
-        }
-    }
-}
-impl Default for SpendingValue {
-    fn default() -> Self {
-        SpendingValue {
-            spent: false,
-            txid: None,
-            vin: None,
-            status: None,
         }
     }
 }
@@ -556,6 +549,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                             Response::builder()
                                 .status(err.0)
                                 .header("Content-Type", "text/plain")
+                                .header("Server", &**VERSION_STRING)
                                 .body(Body::from(err.1))
                                 .unwrap()
                         });
@@ -573,7 +567,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
         None => {
             info!("REST server running on {}", addr);
 
-            let socket = create_socket(&addr);
+            let socket = create_socket(addr);
             socket.listen(511).expect("setting backlog failed");
 
             Server::from_tcp(socket.into())
@@ -585,7 +579,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                 .await
         }
         Some(path) => {
-            if let Ok(meta) = fs::metadata(&path) {
+            if let Ok(meta) = fs::metadata(path) {
                 // Cleanup socket file left by previous execution
                 if meta.file_type().is_socket() {
                     fs::remove_file(path).ok();
@@ -642,7 +636,7 @@ fn handle_request(
     // TODO it looks hyper does not have routing and query parsing :(
     let path: Vec<&str> = uri.path().split('/').skip(1).collect();
     let query_params = match uri.query() {
-        Some(value) => form_urlencoded::parse(&value.as_bytes())
+        Some(value) => form_urlencoded::parse(value.as_bytes())
             .into_owned()
             .collect::<HashMap<String, String>>(),
         None => HashMap::new(),
@@ -651,7 +645,7 @@ fn handle_request(
     info!("handle {:?} {:?}", method, uri);
     match (
         &method,
-        path.get(0),
+        path.first(),
         path.get(1),
         path.get(2),
         path.get(3),
@@ -671,7 +665,7 @@ fn handle_request(
 
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
             let start_height = start_height.and_then(|height| height.parse::<usize>().ok());
-            blocks(&query, &config, start_height)
+            blocks(query, config, start_height)
         }
         (&Method::GET, Some(&"block-height"), Some(height), None, None, None) => {
             let height = height.parse::<usize>()?;
@@ -726,6 +720,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/octet-stream")
                 .header("Cache-Control", format!("public, max-age={:}", TTL_LONG))
+                .header("Server", &**VERSION_STRING)
                 .body(Body::from(raw))
                 .unwrap())
         }
@@ -753,10 +748,10 @@ fn handle_request(
                 .max(0u32) as usize;
             if start_index >= txids.len() {
                 bail!(HttpError::not_found("start index out of range".to_string()));
-            } else if start_index % CHAIN_TXS_PER_PAGE != 0 {
+            } else if start_index % config.rest_default_chain_txs_per_page != 0 {
                 bail!(HttpError::from(format!(
                     "start index must be a multipication of {}",
-                    CHAIN_TXS_PER_PAGE
+                    config.rest_default_chain_txs_per_page
                 )));
             }
 
@@ -767,10 +762,10 @@ fn handle_request(
             let txs = txids
                 .iter()
                 .skip(start_index)
-                .take(CHAIN_TXS_PER_PAGE)
+                .take(config.rest_default_chain_txs_per_page)
                 .map(|txid| {
                     query
-                        .lookup_txn(&txid)
+                        .lookup_txn(txid)
                         .map(|tx| (tx, confirmed_blockid.clone()))
                         .ok_or_else(|| "missing tx".to_string())
                 })
@@ -814,7 +809,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(CHAIN_TXS_PER_PAGE);
+                .unwrap_or(config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -891,7 +886,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(CHAIN_TXS_PER_PAGE);
+                .unwrap_or(config.rest_default_chain_txs_per_page);
 
             let txs = query
                 .chain()
@@ -922,7 +917,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(MAX_MEMPOOL_TXS);
+                .unwrap_or(config.rest_default_max_mempool_txs);
 
             let txs = query
                 .mempool()
@@ -996,6 +991,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", content_type)
                 .header("Cache-Control", format!("public, max-age={:}", ttl))
+                .header("Server", &**VERSION_STRING)
                 .body(body)
                 .unwrap())
         }
@@ -1048,10 +1044,7 @@ fn handle_request(
                 .lookup_spend(&outpoint)
                 .map_or_else(SpendingValue::default, SpendingValue::from);
             let ttl = ttl_by_depth(
-                spend
-                    .status
-                    .as_ref()
-                    .and_then(|ref status| status.block_height),
+                spend.status.as_ref().and_then(|status| status.block_height),
                 query,
             );
             json_response(spend, ttl)
@@ -1124,6 +1117,7 @@ fn handle_request(
                 // Disable caching because we don't currently support caching with query string params
                 .header("Cache-Control", "no-store")
                 .header("Content-Type", "application/json")
+                .header("Server", &**VERSION_STRING)
                 .header("X-Total-Results", total_num.to_string())
                 .body(Body::from(serde_json::to_string(&assets)?))
                 .unwrap())
@@ -1148,7 +1142,7 @@ fn handle_request(
             txs.extend(
                 query
                     .mempool()
-                    .asset_history(&asset_id, MAX_MEMPOOL_TXS)
+                    .asset_history(&asset_id, config.rest_default_max_mempool_txs)
                     .into_iter()
                     .map(|tx| (tx, None)),
             );
@@ -1156,7 +1150,7 @@ fn handle_request(
             txs.extend(
                 query
                     .chain()
-                    .asset_history(&asset_id, None, CHAIN_TXS_PER_PAGE)
+                    .asset_history(&asset_id, None, config.rest_default_chain_txs_per_page)
                     .into_iter()
                     .map(|(tx, blockid)| (tx, Some(blockid))),
             );
@@ -1178,7 +1172,11 @@ fn handle_request(
 
             let txs = query
                 .chain()
-                .asset_history(&asset_id, last_seen_txid.as_ref(), CHAIN_TXS_PER_PAGE)
+                .asset_history(
+                    &asset_id,
+                    last_seen_txid.as_ref(),
+                    config.rest_default_chain_txs_per_page,
+                )
                 .into_iter()
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
@@ -1192,7 +1190,7 @@ fn handle_request(
 
             let txs = query
                 .mempool()
-                .asset_history(&asset_id, MAX_MEMPOOL_TXS)
+                .asset_history(&asset_id, config.rest_default_max_mempool_txs)
                 .into_iter()
                 .map(|tx| (tx, None))
                 .collect();
@@ -1235,6 +1233,7 @@ where
         .status(status)
         .header("Content-Type", "text/plain")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING)
         .body(message.into())
         .unwrap())
 }
@@ -1244,6 +1243,7 @@ fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, Htt
     Ok(Response::builder()
         .header("Content-Type", "application/json")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING)
         .body(Body::from(value))
         .unwrap())
 }
@@ -1254,7 +1254,8 @@ fn json_maybe_error_response<T: Serialize>(
 ) -> Result<Response<Body>, HttpError> {
     let response = Response::builder()
         .header("Content-Type", "application/json")
-        .header("Cache-Control", format!("public, max-age={:}", ttl));
+        .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING);
     Ok(match value {
         Ok(v) => response
             .body(Body::from(serde_json::to_string(&v)?))
@@ -1284,7 +1285,7 @@ fn blocks(
     };
 
     let zero = [0u8; 32];
-    for _ in 0..BLOCK_LIMIT {
+    for _ in 0..config.rest_default_block_limit {
         let blockhm = query
             .chain()
             .get_block_with_meta(&current_hash)

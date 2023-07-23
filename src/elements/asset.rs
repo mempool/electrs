@@ -231,12 +231,13 @@ pub fn remove_mempool_tx_assets(
     });
 }
 
+type HistoryAndIssuances = (Vec<(AssetId, TxHistoryInfo)>, Vec<(AssetId, AssetRow)>);
 // Internal utility function, index a transaction and return its history entries and issuances
 fn index_tx_assets(
     tx: &Transaction,
     network: Network,
     parent_network: BNetwork,
-) -> (Vec<(AssetId, TxHistoryInfo)>, Vec<(AssetId, AssetRow)>) {
+) -> HistoryAndIssuances {
     let mut history = vec![];
     let mut issuances = vec![];
 
@@ -260,7 +261,7 @@ fn index_tx_assets(
                         TxHistoryInfo::Burning(BurningInfo {
                             txid,
                             vout: txo_index as u16,
-                            value: value,
+                            value,
                         }),
                     ));
                 }
@@ -307,10 +308,8 @@ fn index_tx_assets(
             ));
 
             if !is_reissuance {
-                let is_confidential = match txi.asset_issuance.inflation_keys {
-                    Value::Confidential(..) => true,
-                    _ => false,
-                };
+                let is_confidential =
+                    matches!(txi.asset_issuance.inflation_keys, Value::Confidential(..));
                 let reissuance_token =
                     AssetId::reissuance_token_from_entropy(asset_entropy, is_confidential);
 
@@ -362,8 +361,8 @@ pub fn lookup_asset(
 
         return Ok(Some(LiquidAsset::Native(PeggedAsset {
             asset_id: *asset_id,
-            chain_stats: chain_stats,
-            mempool_stats: mempool_stats,
+            chain_stats,
+            mempool_stats,
         })));
     }
 
@@ -480,9 +479,9 @@ fn issued_asset_stats(
     chain_stats.burned_reissuance_tokens =
         chain_asset_stats(chain, reissuance_token, afn).burned_amount;
 
-    let mut mempool_stats = mempool_asset_stats(mempool, &asset_id, afn);
+    let mut mempool_stats = mempool_asset_stats(mempool, asset_id, afn);
     mempool_stats.burned_reissuance_tokens =
-        mempool_asset_stats(mempool, &reissuance_token, afn).burned_amount;
+        mempool_asset_stats(mempool, reissuance_token, afn).burned_amount;
 
     (chain_stats, mempool_stats)
 }

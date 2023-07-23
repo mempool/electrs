@@ -86,9 +86,9 @@ impl Network {
     #[cfg(feature = "liquid")]
     pub fn native_asset(self) -> &'static AssetId {
         match self {
-            Network::Liquid => &*asset::NATIVE_ASSET_ID,
-            Network::LiquidTestnet => &*asset::NATIVE_ASSET_ID_TESTNET,
-            Network::LiquidRegtest => &*asset::NATIVE_ASSET_ID_REGTEST,
+            Network::Liquid => &asset::NATIVE_ASSET_ID,
+            Network::LiquidTestnet => &asset::NATIVE_ASSET_ID_TESTNET,
+            Network::LiquidRegtest => &asset::NATIVE_ASSET_ID_REGTEST,
         }
     }
 

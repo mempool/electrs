@@ -55,7 +55,7 @@ impl<T> Fetcher<T> {
 
     pub fn map<F>(self, mut func: F)
     where
-        F: FnMut(T) -> (),
+        F: FnMut(T),
     {
         for item in self.receiver {
             func(item);
@@ -218,7 +218,7 @@ fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
             Err(_) => break, // EOF
         }
         slices.push((&blob[start as usize..end as usize], block_size));
-        cursor.set_position(end as u64);
+        cursor.set_position(end);
     }
 
     let pool = rayon::ThreadPoolBuilder::new()
