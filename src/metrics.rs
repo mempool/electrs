@@ -69,7 +69,7 @@ impl Metrics {
     pub fn start(&self) {
         let server = tiny_http::Server::http(self.addr)
             .unwrap_or_else(|_| panic!("failed to start monitoring HTTP server at {}", self.addr));
-        start_process_exporter(&self);
+        start_process_exporter(self);
         let reg = self.reg.clone();
         spawn_thread("metrics", move || loop {
             if let Err(e) = handle_request(&reg, server.recv()) {
@@ -113,11 +113,11 @@ fn parse_stats() -> Result<Stats> {
         .expect("failed to get _SC_CLK_TCK") as f64;
 
     let parse_part = |index: usize, name: &str| -> Result<u64> {
-        Ok(parts
+        parts
             .get(index)
             .chain_err(|| format!("missing {}: {:?}", name, parts))?
             .parse::<u64>()
-            .chain_err(|| format!("invalid {}: {:?}", name, parts))?)
+            .chain_err(|| format!("invalid {}: {:?}", name, parts))
     };
 
     // For details, see '/proc/[pid]/stat' section at `man 5 proc`:
@@ -142,7 +142,7 @@ fn start_process_exporter(metrics: &Metrics) {
     spawn_thread("exporter", move || loop {
         match parse_stats() {
             Ok(stats) => {
-                cpu.with_label_values(&["utime"]).set(stats.utime as f64);
+                cpu.with_label_values(&["utime"]).set(stats.utime);
                 rss.set(stats.rss as i64);
                 fds.set(stats.fds as i64);
             }

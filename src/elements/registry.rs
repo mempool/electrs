@@ -143,9 +143,12 @@ pub enum AssetSortDir {
     Ascending,
 }
 
+type Comparator = Box<dyn Fn(&AssetEntry, &AssetEntry) -> cmp::Ordering>;
+
 impl AssetSorting {
-    fn as_comparator(self) -> Box<dyn Fn(&AssetEntry, &AssetEntry) -> cmp::Ordering> {
-        let sort_fn: Box<dyn Fn(&AssetEntry, &AssetEntry) -> cmp::Ordering> = match self.0 {
+    #[allow(clippy::wrong_self_convention)]
+    fn as_comparator(self) -> Comparator {
+        let sort_fn: Comparator = match self.0 {
             AssetSortField::Name => {
                 // Order by name first, use asset id as a tie breaker. the other sorting fields
                 // don't require this because they're guaranteed to be unique.

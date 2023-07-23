@@ -28,12 +28,12 @@ fn parse_hash<T>(value: &Value) -> Result<T>
 where
     T: FromHex,
 {
-    Ok(T::from_hex(
+    T::from_hex(
         value
             .as_str()
             .chain_err(|| format!("non-string value: {}", value))?,
     )
-    .chain_err(|| format!("non-hex value: {}", value))?)
+    .chain_err(|| format!("non-hex value: {}", value))
 }
 
 fn header_from_value(value: Value) -> Result<BlockHeader> {
@@ -41,22 +41,19 @@ fn header_from_value(value: Value) -> Result<BlockHeader> {
         .as_str()
         .chain_err(|| format!("non-string header: {}", value))?;
     let header_bytes = hex::decode(header_hex).chain_err(|| "non-hex header")?;
-    Ok(
-        deserialize(&header_bytes)
-            .chain_err(|| format!("failed to parse header {}", header_hex))?,
-    )
+    deserialize(&header_bytes).chain_err(|| format!("failed to parse header {}", header_hex))
 }
 
 fn block_from_value(value: Value) -> Result<Block> {
     let block_hex = value.as_str().chain_err(|| "non-string block")?;
     let block_bytes = hex::decode(block_hex).chain_err(|| "non-hex block")?;
-    Ok(deserialize(&block_bytes).chain_err(|| format!("failed to parse block {}", block_hex))?)
+    deserialize(&block_bytes).chain_err(|| format!("failed to parse block {}", block_hex))
 }
 
 fn tx_from_value(value: Value) -> Result<Transaction> {
     let tx_hex = value.as_str().chain_err(|| "non-string tx")?;
     let tx_bytes = hex::decode(tx_hex).chain_err(|| "non-hex tx")?;
-    Ok(deserialize(&tx_bytes).chain_err(|| format!("failed to parse tx {}", tx_hex))?)
+    deserialize(&tx_bytes).chain_err(|| format!("failed to parse tx {}", tx_hex))
 }
 
 /// Parse JSONRPC error code, if exists.
@@ -68,7 +65,7 @@ fn parse_jsonrpc_reply(mut reply: Value, method: &str, expected_id: u64) -> Resu
     if let Some(reply_obj) = reply.as_object_mut() {
         if let Some(err) = reply_obj.get("error") {
             if !err.is_null() {
-                if let Some(code) = parse_error_code(&err) {
+                if let Some(code) = parse_error_code(err) {
                     match code {
                         // RPC_IN_WARMUP -> retry by later reconnection
                         -28 => bail!(ErrorKind::Connection(err.to_string())),
@@ -273,8 +270,8 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(
-        daemon_dir: &PathBuf,
-        blocks_dir: &PathBuf,
+        daemon_dir: PathBuf,
+        blocks_dir: PathBuf,
         daemon_rpc_addr: SocketAddr,
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
@@ -282,8 +279,8 @@ impl Daemon {
         metrics: &Metrics,
     ) -> Result<Daemon> {
         let daemon = Daemon {
-            daemon_dir: daemon_dir.clone(),
-            blocks_dir: blocks_dir.clone(),
+            daemon_dir,
+            blocks_dir,
             network,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
@@ -428,12 +425,12 @@ impl Daemon {
 
     pub fn getblockchaininfo(&self) -> Result<BlockchainInfo> {
         let info: Value = self.request("getblockchaininfo", json!([]))?;
-        Ok(from_value(info).chain_err(|| "invalid blockchain info")?)
+        from_value(info).chain_err(|| "invalid blockchain info")
     }
 
     fn getnetworkinfo(&self) -> Result<NetworkInfo> {
         let info: Value = self.request("getnetworkinfo", json!([]))?;
-        Ok(from_value(info).chain_err(|| "invalid network info")?)
+        from_value(info).chain_err(|| "invalid network info")
     }
 
     pub fn getbestblockhash(&self) -> Result<BlockHash> {
@@ -523,7 +520,7 @@ impl Daemon {
 
     pub fn getmempooltxids(&self) -> Result<HashSet<Txid>> {
         let res = self.request("getrawmempool", json!([/*verbose=*/ false]))?;
-        Ok(serde_json::from_value(res).chain_err(|| "invalid getrawmempool reply")?)
+        serde_json::from_value(res).chain_err(|| "invalid getrawmempool reply")
     }
 
     pub fn broadcast(&self, tx: &Transaction) -> Result<Txid> {
@@ -532,10 +529,8 @@ impl Daemon {
 
     pub fn broadcast_raw(&self, txhex: &str) -> Result<Txid> {
         let txid = self.request("sendrawtransaction", json!([txhex]))?;
-        Ok(
-            Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
-                .chain_err(|| "failed to parse txid")?,
-        )
+        Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
+            .chain_err(|| "failed to parse txid")
     }
 
     // Get estimated feerates for the provided confirmation targets using a batch RPC request
@@ -584,7 +579,7 @@ impl Daemon {
         let mut result = vec![];
         for heights in all_heights.chunks(chunk_size) {
             trace!("downloading {} block headers", heights.len());
-            let mut headers = self.getblockheaders(&heights)?;
+            let mut headers = self.getblockheaders(heights)?;
             assert!(headers.len() == heights.len());
             result.append(&mut headers);
         }

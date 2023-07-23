@@ -80,6 +80,7 @@ struct HealthCheck {
     hostname: Hostname,
     service: Service,
     is_default: bool,
+    #[allow(dead_code)]
     added_by: Option<IpAddr>,
     last_check: Option<Instant>,
     last_healthy: Option<Instant>,
@@ -547,23 +548,33 @@ mod tests {
             false,
             None,
         ));
-        discovery.add_default_server(
-            "electrum.blockstream.info".into(),
-            vec![Service::Tcp(60001)],
-        ).unwrap();
-        discovery.add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)]).unwrap();
-        discovery.add_default_server(
-            "tn.not.fyi".into(),
-            vec![Service::Tcp(55001), Service::Ssl(55002)],
-        ).unwrap();
-        discovery.add_default_server(
-            "electrum.blockstream.info".into(),
-            vec![Service::Tcp(60001), Service::Ssl(60002)],
-        ).unwrap();
-        discovery.add_default_server(
-            "explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion".into(),
-            vec![Service::Tcp(143)],
-        ).unwrap();
+        discovery
+            .add_default_server(
+                "electrum.blockstream.info".into(),
+                vec![Service::Tcp(60001)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server("testnet.hsmiths.com".into(), vec![Service::Ssl(53012)])
+            .unwrap();
+        discovery
+            .add_default_server(
+                "tn.not.fyi".into(),
+                vec![Service::Tcp(55001), Service::Ssl(55002)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server(
+                "electrum.blockstream.info".into(),
+                vec![Service::Tcp(60001), Service::Ssl(60002)],
+            )
+            .unwrap();
+        discovery
+            .add_default_server(
+                "explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion".into(),
+                vec![Service::Tcp(143)],
+            )
+            .unwrap();
 
         debug!("{:#?}", discovery);
 

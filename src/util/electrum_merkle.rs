@@ -9,7 +9,7 @@ pub fn get_tx_merkle_proof(
     block_hash: &BlockHash,
 ) -> Result<(Vec<Sha256dHash>, usize)> {
     let txids = chain
-        .get_block_txids(&block_hash)
+        .get_block_txids(block_hash)
         .chain_err(|| format!("missing block txids for #{}", block_hash))?;
     let pos = txids
         .iter()

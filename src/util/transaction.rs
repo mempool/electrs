@@ -31,7 +31,7 @@ impl From<Option<BlockId>> for TransactionStatus {
         match blockid {
             Some(b) => TransactionStatus {
                 confirmed: true,
-                block_height: Some(b.height as usize),
+                block_height: Some(b.height),
                 block_hash: Some(b.hash),
                 block_time: Some(b.time),
             },
