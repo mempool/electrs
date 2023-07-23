@@ -39,9 +39,6 @@ use std::sync::Arc;
 use std::thread;
 use url::form_urlencoded;
 
-const CHAIN_TXS_PER_PAGE: usize = 25;
-const MAX_MEMPOOL_TXS: usize = 50;
-const BLOCK_LIMIT: usize = 10;
 const ADDRESS_SEARCH_LIMIT: usize = 10;
 
 #[cfg(feature = "liquid")]
@@ -749,10 +746,10 @@ fn handle_request(
                 .max(0u32) as usize;
             if start_index >= txids.len() {
                 bail!(HttpError::not_found("start index out of range".to_string()));
-            } else if start_index % CHAIN_TXS_PER_PAGE != 0 {
+            } else if start_index % config.rest_default_chain_txs_per_page != 0 {
                 bail!(HttpError::from(format!(
                     "start index must be a multipication of {}",
-                    CHAIN_TXS_PER_PAGE
+                    config.rest_default_chain_txs_per_page
                 )));
             }
 
@@ -763,7 +760,7 @@ fn handle_request(
             let txs = txids
                 .iter()
                 .skip(start_index)
-                .take(CHAIN_TXS_PER_PAGE)
+                .take(config.rest_default_chain_txs_per_page)
                 .map(|txid| {
                     query
                         .lookup_txn(txid)
@@ -810,7 +807,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(CHAIN_TXS_PER_PAGE);
+                .unwrap_or(config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -887,7 +884,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(CHAIN_TXS_PER_PAGE);
+                .unwrap_or(config.rest_default_chain_txs_per_page);
 
             let txs = query
                 .chain()
@@ -918,7 +915,7 @@ fn handle_request(
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(MAX_MEMPOOL_TXS);
+                .unwrap_or(config.rest_default_max_mempool_txs);
 
             let txs = query
                 .mempool()
@@ -1141,7 +1138,7 @@ fn handle_request(
             txs.extend(
                 query
                     .mempool()
-                    .asset_history(&asset_id, MAX_MEMPOOL_TXS)
+                    .asset_history(&asset_id, config.rest_default_max_mempool_txs)
                     .into_iter()
                     .map(|tx| (tx, None)),
             );
@@ -1149,7 +1146,7 @@ fn handle_request(
             txs.extend(
                 query
                     .chain()
-                    .asset_history(&asset_id, None, CHAIN_TXS_PER_PAGE)
+                    .asset_history(&asset_id, None, config.rest_default_chain_txs_per_page)
                     .into_iter()
                     .map(|(tx, blockid)| (tx, Some(blockid))),
             );
@@ -1171,7 +1168,11 @@ fn handle_request(
 
             let txs = query
                 .chain()
-                .asset_history(&asset_id, last_seen_txid.as_ref(), CHAIN_TXS_PER_PAGE)
+                .asset_history(
+                    &asset_id,
+                    last_seen_txid.as_ref(),
+                    config.rest_default_chain_txs_per_page,
+                )
                 .into_iter()
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
@@ -1185,7 +1186,7 @@ fn handle_request(
 
             let txs = query
                 .mempool()
-                .asset_history(&asset_id, MAX_MEMPOOL_TXS)
+                .asset_history(&asset_id, config.rest_default_max_mempool_txs)
                 .into_iter()
                 .map(|tx| (tx, None))
                 .collect();
@@ -1277,7 +1278,7 @@ fn blocks(
     };
 
     let zero = [0u8; 32];
-    for _ in 0..BLOCK_LIMIT {
+    for _ in 0..config.rest_default_block_limit {
         let blockhm = query
             .chain()
             .get_block_with_meta(&current_hash)
