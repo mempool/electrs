@@ -56,15 +56,3 @@ cargo clippy $@ -q -F liquid
 TESTNAME="Running cargo clippy check electrum-discovery + liquid"
 echo "$TESTNAME"
 cargo clippy $@ -q -F electrum-discovery,liquid
-
-# Only liquid and electrum-discovery have weird not() directives,
-# So for other features that are only additive we will test
-# solo + with the original esplora features.
-
-TESTNAME="Running cargo clippy check internal-apis"
-echo "$TESTNAME"
-cargo clippy $@ -q -F internal-apis
-
-TESTNAME="Running cargo clippy check internal-apis + electrum-discovery + liquid"
-echo "$TESTNAME"
-cargo clippy $@ -q -F internal-apis,electrum-discovery,liquid

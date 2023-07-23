@@ -15,7 +15,6 @@ edition = "2018"
 default = []
 liquid = [ "elements" ]
 electrum-discovery = [ "electrum-client"]
-internal-apis = []
 
 [dependencies]
 arrayref = "0.3.6"

@@ -47,8 +47,6 @@ jobs:
           '-F electrum-discovery',
           '-F liquid',
           '-F electrum-discovery,liquid',
-          '-F internal-apis',
-          '-F internal-apis,electrum-discovery,liquid',
         ]
     steps:
       - uses: actions/checkout@v3

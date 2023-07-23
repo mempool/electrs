@@ -1,7 +1,5 @@
 use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
-use crate::config::Config;
-#[cfg(feature = "internal-apis")]
-use crate::config::VERSION_STRING;
+use crate::config::{Config, VERSION_STRING};
 use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
@@ -551,6 +549,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                             Response::builder()
                                 .status(err.0)
                                 .header("Content-Type", "text/plain")
+                                .header("Server", &**VERSION_STRING)
                                 .body(Body::from(err.1))
                                 .unwrap()
                         });
@@ -652,13 +651,6 @@ fn handle_request(
         path.get(3),
         path.get(4),
     ) {
-        // Useful for getting the version from a running electrs
-        // Must add the `internal-apis` feature when compiling.
-        #[cfg(feature = "internal-apis")]
-        (&Method::GET, Some(&"internal"), Some(&"version"), None, None, None) => {
-            http_message(StatusCode::OK, VERSION_STRING.as_str(), TTL_SHORT)
-        }
-
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_hash().to_hex(),
@@ -728,6 +720,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/octet-stream")
                 .header("Cache-Control", format!("public, max-age={:}", TTL_LONG))
+                .header("Server", &**VERSION_STRING)
                 .body(Body::from(raw))
                 .unwrap())
         }
@@ -998,6 +991,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", content_type)
                 .header("Cache-Control", format!("public, max-age={:}", ttl))
+                .header("Server", &**VERSION_STRING)
                 .body(body)
                 .unwrap())
         }
@@ -1123,6 +1117,7 @@ fn handle_request(
                 // Disable caching because we don't currently support caching with query string params
                 .header("Cache-Control", "no-store")
                 .header("Content-Type", "application/json")
+                .header("Server", &**VERSION_STRING)
                 .header("X-Total-Results", total_num.to_string())
                 .body(Body::from(serde_json::to_string(&assets)?))
                 .unwrap())
@@ -1238,6 +1233,7 @@ where
         .status(status)
         .header("Content-Type", "text/plain")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING)
         .body(message.into())
         .unwrap())
 }
@@ -1247,6 +1243,7 @@ fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, Htt
     Ok(Response::builder()
         .header("Content-Type", "application/json")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING)
         .body(Body::from(value))
         .unwrap())
 }
@@ -1257,7 +1254,8 @@ fn json_maybe_error_response<T: Serialize>(
 ) -> Result<Response<Body>, HttpError> {
     let response = Response::builder()
         .header("Content-Type", "application/json")
-        .header("Cache-Control", format!("public, max-age={:}", ttl));
+        .header("Cache-Control", format!("public, max-age={:}", ttl))
+        .header("Server", &**VERSION_STRING);
     Ok(match value {
         Ok(v) => response
             .body(Body::from(serde_json::to_string(&v)?))
