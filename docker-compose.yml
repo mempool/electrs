@@ -1,0 +1,24 @@
+version: '3.9'
+services:
+
+  mempool-electrs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: on-failure
+
+    ports:
+      - 50001:50001
+
+    entrypoint:
+      /bin/electrs
+    command: |
+      --address-search
+      --cookie mempool:mempool
+      --db-dir /electrs
+      --cors '*'
+    volumes:
+    - 'electrs_data:/electrs'
+
+volumes:
+  electrs_data:
