@@ -1086,6 +1086,27 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), Some(&"all"), None, None) => {
+            let txs = query
+                .mempool()
+                .txs()
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let txs = query
+                .mempool()
+                .txs_page(10_000, last_seen_txid)
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
             let recent = mempool.recent_txs_overview();
