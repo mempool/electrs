@@ -5,7 +5,6 @@ use electrs::{
     new_index::{Store, TxHistoryKey},
     util::bincode_util,
 };
-use std::{cmp::Reverse, collections::BTreeSet};
 
 /*
 // How to run:
@@ -22,6 +21,10 @@ cargo run \
 fn main() {
     let config = Config::from_args();
     let store = Store::open(&config.db_path.join("newindex"), &config);
+    let high_usage_threshold = std::env::var("HIGH_USAGE_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(4000);
 
     let mut iter = store.history_db().raw_iterator();
     eprintln!("Seeking DB to beginning of tx histories");
@@ -31,8 +34,8 @@ fn main() {
     let mut curr_scripthash = [0u8; 32];
     let mut total_entries: usize = 0;
     let mut iter_index: usize = 1;
-    // Pre-allocate 40 bytes x capacity
-    let mut popular_scripts = BTreeSet::new();
+    // Pre-allocate 32 bytes x capacity
+    let mut popular_scripts = Vec::with_capacity(16384);
 
     while iter.valid() {
         let key = iter.key().unwrap();
@@ -40,7 +43,12 @@ fn main() {
         if !key.starts_with(b"H") {
             // We have left the txhistory section,
             // but we need to check the final scripthash
-            push_if_popular(total_entries, curr_scripthash, &mut popular_scripts);
+            push_if_popular(
+                high_usage_threshold,
+                total_entries,
+                curr_scripthash,
+                &mut popular_scripts,
+            );
             break;
         }
 
@@ -56,7 +64,12 @@ fn main() {
             // We have rolled on to a new scripthash
             // If the last scripthash was popular
             // Collect for sorting
-            push_if_popular(total_entries, curr_scripthash, &mut popular_scripts);
+            push_if_popular(
+                high_usage_threshold,
+                total_entries,
+                curr_scripthash,
+                &mut popular_scripts,
+            );
 
             // After collecting, reset values for next scripthash
             curr_scripthash = entry.hash;
@@ -69,45 +82,19 @@ fn main() {
         iter.next();
     }
 
-    for Reverse(ScriptHashFrequency { script, count }) in popular_scripts {
-        println!("scripthash,{},{}", hex::encode(script), count);
+    for script in popular_scripts {
+        println!("{}", hex::encode(script));
     }
 }
 
 #[inline]
 fn push_if_popular(
+    high_usage_threshold: u32,
     total_entries: usize,
     curr_scripthash: [u8; 32],
-    popular_scripts: &mut BTreeSet<Reverse<ScriptHashFrequency>>,
+    popular_scripts: &mut Vec<[u8; 32]>,
 ) {
-    if total_entries >= 4000 {
-        popular_scripts.insert(Reverse(ScriptHashFrequency::new(
-            curr_scripthash,
-            total_entries,
-        )));
-    }
-}
-
-#[derive(PartialEq, Eq)]
-struct ScriptHashFrequency {
-    script: [u8; 32],
-    count: usize,
-}
-
-impl ScriptHashFrequency {
-    fn new(script: [u8; 32], count: usize) -> Self {
-        Self { script, count }
-    }
-}
-
-impl PartialOrd for ScriptHashFrequency {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.count.partial_cmp(&other.count)
-    }
-}
-
-impl Ord for ScriptHashFrequency {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.count.cmp(&other.count)
+    if total_entries >= high_usage_threshold as usize {
+        popular_scripts.push(curr_scripthash);
     }
 }
