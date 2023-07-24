@@ -699,6 +699,18 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
+        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), None, None) => {
+            let hash = BlockHash::from_hex(hash)?;
+            let txs = query
+                .chain()
+                .get_block_txs(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
             let header = query

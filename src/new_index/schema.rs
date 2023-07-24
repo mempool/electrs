@@ -371,6 +371,34 @@ impl ChainQuery {
         }
     }
 
+    pub fn get_block_txs(&self, hash: &BlockHash) -> Option<Vec<Transaction>> {
+        let _timer = self.start_timer("get_block_txs");
+
+        let txids: Option<Vec<Txid>> = if self.light_mode {
+            // TODO fetch block as binary from REST API instead of as hex
+            let mut blockinfo = self.daemon.getblock_raw(hash, 1).ok()?;
+            Some(serde_json::from_value(blockinfo["tx"].take()).unwrap())
+        } else {
+            self.store
+                .txstore_db
+                .get(&BlockRow::txids_key(full_hash(&hash[..])))
+                .map(|val| bincode::deserialize(&val).expect("failed to parse block txids"))
+        };
+
+        txids.and_then(|txid_vec| {
+            let mut transactions = Vec::new();
+
+            for txid in txid_vec {
+                match self.lookup_txn(&txid, Some(hash)) {
+                    Some(transaction) => transactions.push(transaction),
+                    None => return None,
+                }
+            }
+
+            Some(transactions)
+        })
+    }
+
     pub fn get_block_meta(&self, hash: &BlockHash) -> Option<BlockMeta> {
         let _timer = self.start_timer("get_block_meta");
 
