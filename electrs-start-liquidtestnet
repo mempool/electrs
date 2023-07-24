@@ -2,9 +2,14 @@
 #source "${HOME}/.cargo/env"
 #export PATH="${HOME}/.cargo/bin:${PATH}"
 
+# don't bother making electrs.core files
+ulimit -c
+
+# get credentials from elements.conf directly
 ELEMENTS_RPC_USER=$(grep 'rpcuser=' "${HOME}/elements.conf"|cut -d = -f2|head -1)
 ELEMENTS_RPC_PASS=$(grep 'rpcpassword=' "${HOME}/elements.conf"|cut -d = -f2|head -1)
 
+# run in loop in case of crash
 until false
 do
     cd "${HOME}/electrs"

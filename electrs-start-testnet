@@ -2,9 +2,14 @@
 #source "${HOME}/.cargo/env"
 #export PATH="${HOME}/.cargo/bin:${PATH}"
 
+# don't bother making electrs.core files
+ulimit -c
+
+# get credentials from bitcoin.conf directly
 BITCOIN_RPC_USER=$(grep 'rpcuser=' ${HOME}/bitcoin.conf|cut -d = -f2|head -1)
 BITCOIN_RPC_PASS=$(grep 'rpcpassword=' ${HOME}/bitcoin.conf|cut -d = -f2|head -1)
 
+# run in loop in case of crash
 until false
 do
 	cd "${HOME}/electrs"
