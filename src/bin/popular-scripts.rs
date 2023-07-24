@@ -44,7 +44,7 @@ fn main() {
             break;
         }
 
-        if iter_index % 1_000_000 == 0 {
+        if iter_index % 10_000_000 == 0 {
             eprintln!("Processing row #{}...", iter_index);
         }
 

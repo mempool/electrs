@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+#source "${HOME}/.cargo/env"
+#export PATH="${HOME}/.cargo/bin:${PATH}"
+
+cd "${HOME}/electrs"
+# stdout only prints the results
+# stderr prints out a message every 10 million rows
+cargo run \
+	--release \
+	--bin popular-scripts \
+	-- \
+	--db-dir "/electrs" \
+	> ./contrib/popular-scripts.txt
