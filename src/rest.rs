@@ -549,7 +549,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                             Response::builder()
                                 .status(err.0)
                                 .header("Content-Type", "text/plain")
-                                .header("Server", &**VERSION_STRING)
+                                .header("X-Powered-By", &**VERSION_STRING)
                                 .body(Body::from(err.1))
                                 .unwrap()
                         });
@@ -720,7 +720,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/octet-stream")
                 .header("Cache-Control", format!("public, max-age={:}", TTL_LONG))
-                .header("Server", &**VERSION_STRING)
+                .header("X-Powered-By", &**VERSION_STRING)
                 .body(Body::from(raw))
                 .unwrap())
         }
@@ -991,7 +991,7 @@ fn handle_request(
                 .status(StatusCode::OK)
                 .header("Content-Type", content_type)
                 .header("Cache-Control", format!("public, max-age={:}", ttl))
-                .header("Server", &**VERSION_STRING)
+                .header("X-Powered-By", &**VERSION_STRING)
                 .body(body)
                 .unwrap())
         }
@@ -1086,6 +1086,27 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), Some(&"all"), None, None) => {
+            let txs = query
+                .mempool()
+                .txs()
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+        (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let txs = query
+                .mempool()
+                .txs_page(10_000, last_seen_txid)
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
             let recent = mempool.recent_txs_overview();
@@ -1117,7 +1138,7 @@ fn handle_request(
                 // Disable caching because we don't currently support caching with query string params
                 .header("Cache-Control", "no-store")
                 .header("Content-Type", "application/json")
-                .header("Server", &**VERSION_STRING)
+                .header("X-Powered-By", &**VERSION_STRING)
                 .header("X-Total-Results", total_num.to_string())
                 .body(Body::from(serde_json::to_string(&assets)?))
                 .unwrap())
@@ -1233,7 +1254,7 @@ where
         .status(status)
         .header("Content-Type", "text/plain")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .header("Server", &**VERSION_STRING)
+        .header("X-Powered-By", &**VERSION_STRING)
         .body(message.into())
         .unwrap())
 }
@@ -1243,7 +1264,7 @@ fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, Htt
     Ok(Response::builder()
         .header("Content-Type", "application/json")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .header("Server", &**VERSION_STRING)
+        .header("X-Powered-By", &**VERSION_STRING)
         .body(Body::from(value))
         .unwrap())
 }
@@ -1255,7 +1276,7 @@ fn json_maybe_error_response<T: Serialize>(
     let response = Response::builder()
         .header("Content-Type", "application/json")
         .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .header("Server", &**VERSION_STRING);
+        .header("X-Powered-By", &**VERSION_STRING);
     Ok(match value {
         Ok(v) => response
             .body(Body::from(serde_json::to_string(&v)?))
