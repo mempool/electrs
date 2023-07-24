@@ -25,6 +25,10 @@ fn main() {
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(4000);
+    eprintln!(
+        "Seaching for scripts with history rows of {} or more...",
+        high_usage_threshold
+    );
 
     let mut iter = store.history_db().raw_iterator();
     eprintln!("Seeking DB to beginning of tx histories");
