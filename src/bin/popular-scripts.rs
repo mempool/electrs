@@ -48,7 +48,7 @@ fn main() {
             eprintln!("Processing row #{}...", iter_index);
         }
 
-        let entry: TxHistoryKey = bincode_util::deserialize(key)
+        let entry: TxHistoryKey = bincode_util::deserialize_big_retry(key)
             .0
             .expect("failed to deserialize TxHistoryKey");
 
