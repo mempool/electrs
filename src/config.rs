@@ -14,7 +14,19 @@ use crate::errors::*;
 #[cfg(feature = "liquid")]
 use bitcoin::Network as BNetwork;
 
-const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const APP_NAME: &str = "mempool-electrs";
+pub(crate) const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const GIT_HASH: Option<&str> = option_env!("GIT_HASH");
+
+lazy_static! {
+    pub(crate) static ref VERSION_STRING: String = {
+        if let Some(hash) = GIT_HASH {
+            format!("{} {}-{}", APP_NAME, ELECTRS_VERSION, hash)
+        } else {
+            format!("{} {}", APP_NAME, ELECTRS_VERSION)
+        }
+    };
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -73,6 +85,11 @@ impl Config {
 
         let args = App::new("Electrum Rust Server")
             .version(crate_version!())
+            .arg(
+                Arg::with_name("version")
+                    .long("version")
+                    .help("Print out the version of this app and quit immediately."),
+            )
             .arg(
                 Arg::with_name("verbosity")
                     .short("v")
@@ -260,6 +277,11 @@ impl Config {
 
         let m = args.get_matches();
 
+        if m.is_present("version") {
+            eprintln!("{}", *VERSION_STRING);
+            std::process::exit(0);
+        }
+
         let network_name = m.value_of("network").unwrap_or("mainnet");
         let network_type = Network::from(network_name);
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
@@ -399,10 +421,9 @@ impl Config {
             .unwrap_or_else(|| daemon_dir.join("blocks"));
         let cookie = m.value_of("cookie").map(|s| s.to_owned());
 
-        let electrum_banner = m.value_of("electrum_banner").map_or_else(
-            || format!("Welcome to mempool-electrs {}", ELECTRS_VERSION),
-            |s| s.into(),
-        );
+        let electrum_banner = m
+            .value_of("electrum_banner")
+            .map_or_else(|| format!("Welcome to {}", *VERSION_STRING), |s| s.into());
 
         #[cfg(feature = "electrum-discovery")]
         let electrum_public_hosts = m

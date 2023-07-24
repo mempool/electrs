@@ -18,7 +18,7 @@ use bitcoin::consensus::encode::serialize;
 use elements::encode::serialize;
 
 use crate::chain::Txid;
-use crate::config::Config;
+use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
@@ -29,7 +29,6 @@ use crate::util::{
     SyncChannel,
 };
 
-const ELECTRS_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(1, 4);
 const MAX_HEADERS: usize = 2016;
 
@@ -138,10 +137,7 @@ impl Connection {
     }
 
     fn server_version(&self) -> Result<Value> {
-        Ok(json!([
-            format!("electrs-esplora {}", ELECTRS_VERSION),
-            PROTOCOL_VERSION
-        ]))
+        Ok(json!([VERSION_STRING.as_str(), PROTOCOL_VERSION]))
     }
 
     fn server_banner(&self) -> Result<Value> {
@@ -704,7 +700,7 @@ impl RPC {
             use crate::chain::genesis_hash;
             let features = ServerFeatures {
                 hosts,
-                server_version: format!("electrs-esplora {}", ELECTRS_VERSION),
+                server_version: VERSION_STRING.clone(),
                 genesis_hash: genesis_hash(config.network_type),
                 protocol_min: PROTOCOL_VERSION,
                 protocol_max: PROTOCOL_VERSION,
