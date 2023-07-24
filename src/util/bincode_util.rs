@@ -12,7 +12,7 @@ where
 {
     bincode::options()
         .with_big_endian()
-        .with_varint_encoding()
+        .with_fixint_encoding()
         .with_no_limit()
         .allow_trailing_bytes()
         .serialize(value)
@@ -24,7 +24,7 @@ where
 {
     bincode::options()
         .with_big_endian()
-        .with_varint_encoding()
+        .with_fixint_encoding()
         .with_no_limit()
         .allow_trailing_bytes()
         .deserialize(bytes)
@@ -36,7 +36,7 @@ where
 {
     bincode::options()
         .with_little_endian()
-        .with_varint_encoding()
+        .with_fixint_encoding()
         .with_no_limit()
         .allow_trailing_bytes()
         .serialize(value)
@@ -48,7 +48,7 @@ where
 {
     bincode::options()
         .with_little_endian()
-        .with_varint_encoding()
+        .with_fixint_encoding()
         .with_no_limit()
         .allow_trailing_bytes()
         .deserialize(bytes)
