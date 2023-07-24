@@ -1360,6 +1360,7 @@ impl BlockRow {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FundingInfo {
     pub txid: FullHash,
     pub vout: u16,
@@ -1367,6 +1368,7 @@ pub struct FundingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SpendingInfo {
     pub txid: FullHash, // spending transaction
     pub vin: u16,
@@ -1376,6 +1378,7 @@ pub struct SpendingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TxHistoryInfo {
     Funding(FundingInfo),
     Spending(SpendingInfo),
@@ -1407,6 +1410,7 @@ impl TxHistoryInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
@@ -1635,4 +1639,166 @@ fn from_utxo_cache(utxos_cache: CachedUtxoMap, chain: &ChainQuery) -> UtxoMap {
             (outpoint, (blockid, value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DBRow, TxHistoryRow};
+    use elements::confidential::Value;
+    use std::convert::TryInto;
+
+    /// This test is the only place where bincode uses non-default settings.
+    /// These test cases were verified with the deprecated config() methods
+    /// to ensure that they will work with options() as well.
+    #[test]
+    fn tx_history_row_ser_deser_tests() {
+        #[rustfmt::skip]
+        let inputs = [
+            vec![
+                // code
+                72,
+                // hash
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                // confirmed_height
+                0, 0, 0, 2,
+                // TxHistoryInfo variant (Funding)
+                0, 0, 0, 0,
+                // FundingInfo
+                // txid
+                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                // vout
+                0, 3,
+                // Value variant (Explicit)
+                0, 0, 0, 0, 0, 0, 0, 2,
+                // number of tuple elements
+                1,
+                // Inner value (u64)
+                7, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 0,
+                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                0, 3,
+                // Value variant (Null)
+                0, 0, 0, 0, 0, 0, 0, 1,
+                // number of tuple elements
+                0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 1,
+                18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                    18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                0, 12,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                    98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                0, 9,
+                0, 0, 0, 0, 0, 0, 0, 2,
+                1,
+                14, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 1,
+                18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                    18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                0, 12,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                    98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                0, 9,
+                0, 0, 0, 0, 0, 0, 0, 1,
+                0,
+            ],
+        ];
+        let expected = [
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
+                        txid: [2; 32],
+                        vout: 3,
+                        value: Value::Explicit(7),
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
+                        txid: [2; 32],
+                        vout: 3,
+                        value: Value::Null,
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
+                        txid: [18; 32],
+                        vin: 12,
+                        prev_txid: "beef".repeat(8).as_bytes().try_into().unwrap(),
+                        prev_vout: 9,
+                        value: Value::Explicit(14),
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
+                        txid: [18; 32],
+                        vin: 12,
+                        prev_txid: "beef".repeat(8).as_bytes().try_into().unwrap(),
+                        prev_vout: 9,
+                        value: Value::Null,
+                    }),
+                },
+            },
+        ];
+        for (expected_row, input) in
+            IntoIterator::into_iter(expected).zip(IntoIterator::into_iter(inputs))
+        {
+            let input_row = DBRow {
+                key: input,
+                value: vec![],
+            };
+            assert_eq!(TxHistoryRow::from_row(input_row).key, expected_row.key);
+        }
+
+        #[rustfmt::skip]
+        assert_eq!(
+            TxHistoryRow::prefix_height(b'H', "beef".repeat(8).as_bytes(), 1337),
+            vec![
+                // code
+                72,
+                // hash
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                // height
+                0, 0, 5, 57
+            ]
+        );
+    }
 }

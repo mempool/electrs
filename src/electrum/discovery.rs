@@ -531,20 +531,21 @@ mod tests {
     const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(1, 4);
 
     #[test]
+    #[ignore = "Needs connection to test"]
     fn test() -> Result<()> {
         stderrlog::new().verbosity(4).init().unwrap();
 
         let features = ServerFeatures {
             hosts: serde_json::from_str("{\"test.foobar.example\":{\"tcp_port\":60002}}").unwrap(),
             server_version: VERSION_STRING.clone(),
-            genesis_hash: genesis_hash(Network::Testnet),
+            genesis_hash: genesis_hash(Network::LiquidTestnet),
             protocol_min: PROTOCOL_VERSION,
             protocol_max: PROTOCOL_VERSION,
             hash_function: "sha256".into(),
             pruning: None,
         };
         let discovery = Arc::new(DiscoveryManager::new(
-            Network::Testnet,
+            Network::LiquidTestnet,
             features,
             PROTOCOL_VERSION,
             false,

@@ -152,6 +152,7 @@ impl LiquidAsset {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IssuingInfo {
     pub txid: FullHash,
     pub vin: u16,
@@ -162,6 +163,7 @@ pub struct IssuingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct BurningInfo {
     pub txid: FullHash,
     pub vout: u16,
