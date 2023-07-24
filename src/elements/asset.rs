@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use bitcoin::hashes::{hex::FromHex, sha256, Hash};
 use elements::confidential::{Asset, Value};
@@ -345,9 +345,14 @@ fn asset_history_row(
     TxHistoryRow { key }
 }
 
+pub enum AssetRegistryLock<'a> {
+    RwLock(&'a Arc<RwLock<AssetRegistry>>),
+    RwLockReadGuard(&'a RwLockReadGuard<'a, AssetRegistry>),
+}
+
 pub fn lookup_asset(
     query: &Query,
-    registry: Option<&Arc<RwLock<AssetRegistry>>>,
+    registry: Option<AssetRegistryLock>,
     asset_id: &AssetId,
     meta: Option<&AssetMeta>, // may optionally be provided if already known
 ) -> Result<Option<LiquidAsset>> {
@@ -362,7 +367,8 @@ pub fn lookup_asset(
     }
 
     let history_db = query.chain().store().history_db();
-    let mempool_issuances = &query.mempool().asset_issuance;
+    let mempool = query.mempool();
+    let mempool_issuances = &mempool.asset_issuance;
 
     let chain_row = history_db
         .get(&[b"i", &asset_id.into_inner()[..]].concat())
@@ -375,11 +381,14 @@ pub fn lookup_asset(
     Ok(if let Some(row) = row {
         let reissuance_token = parse_asset_id(&row.reissuance_token);
 
-        let registry = registry.map(|r| r.read().unwrap());
-        let meta = meta
-            .or_else(|| registry.as_ref().and_then(|r| r.get(asset_id)))
-            .cloned();
-        let stats = issued_asset_stats(query, asset_id, &reissuance_token);
+        let meta = meta.map(Clone::clone).or_else(|| match registry {
+            Some(AssetRegistryLock::RwLock(rwlock)) => {
+                rwlock.read().unwrap().get(asset_id).cloned()
+            }
+            Some(AssetRegistryLock::RwLockReadGuard(guard)) => guard.get(asset_id).cloned(),
+            None => None,
+        });
+        let stats = issued_asset_stats(query.chain(), &mempool, asset_id, &reissuance_token);
         let status = query.get_tx_status(&deserialize(&row.issuance_txid).unwrap());
 
         let asset = IssuedAsset::new(asset_id, row, stats, meta, status);
@@ -459,21 +468,20 @@ fn pegged_asset_stats(query: &Query, asset_id: &AssetId) -> (PeggedAssetStats, P
 
 // Get stats for issued assets
 fn issued_asset_stats(
-    query: &Query,
+    chain: &ChainQuery,
+    mempool: &Mempool,
     asset_id: &AssetId,
     reissuance_token: &AssetId,
 ) -> (IssuedAssetStats, IssuedAssetStats) {
     let afn = apply_issued_asset_stats;
 
-    let chain = query.chain();
     let mut chain_stats = chain_asset_stats(chain, asset_id, afn);
     chain_stats.burned_reissuance_tokens =
         chain_asset_stats(chain, reissuance_token, afn).burned_amount;
 
-    let mempool = query.mempool();
-    let mut mempool_stats = mempool_asset_stats(&mempool, asset_id, afn);
+    let mut mempool_stats = mempool_asset_stats(mempool, asset_id, afn);
     mempool_stats.burned_reissuance_tokens =
-        mempool_asset_stats(&mempool, reissuance_token, afn).burned_amount;
+        mempool_asset_stats(mempool, reissuance_token, afn).burned_amount;
 
     (chain_stats, mempool_stats)
 }
