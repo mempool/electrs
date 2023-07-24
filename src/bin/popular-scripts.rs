@@ -7,6 +7,16 @@ use electrs::{
 };
 use std::cmp::Reverse;
 
+/*
+// How to run:
+export ELECTRS_DATA=/path/to/electrs
+cargo run \
+  -q --release --bin popular-scripts \
+  --db-path $ELECTRS_DATA/db/mainnet \
+  > ./contrib/popular-scripts.txt
+*/
+
+// Dev note:
 // Only use println for file output (lines for output)
 // Use eprintln to print to stderr for dev notifications
 fn main() {
@@ -28,6 +38,9 @@ fn main() {
         let key = iter.key().unwrap();
 
         if !key.starts_with(b"H") {
+            // We have left the txhistory section,
+            // but we need to check the final scripthash
+            push_if_popular(total_entries, curr_scripthash, &mut popular_scripts);
             break;
         }
 
@@ -46,12 +59,7 @@ fn main() {
             // We have rolled on to a new scripthash
             // If the last scripthash was popular
             // Collect for sorting
-            if total_entries >= 4000 {
-                popular_scripts.push(Reverse(ScriptHashFrequency::new(
-                    curr_scripthash,
-                    total_entries,
-                )));
-            }
+            push_if_popular(total_entries, curr_scripthash, &mut popular_scripts);
 
             // After collecting, reset values for next scripthash
             curr_scripthash = entry.hash;
@@ -70,6 +78,20 @@ fn main() {
 
     for Reverse(ScriptHashFrequency { script, count }) in popular_scripts {
         println!("scripthash,{},{}", hex::encode(script), count);
+    }
+}
+
+#[inline]
+fn push_if_popular(
+    total_entries: usize,
+    curr_scripthash: [u8; 32],
+    popular_scripts: &mut Vec<Reverse<ScriptHashFrequency>>,
+) {
+    if total_entries >= 4000 {
+        popular_scripts.push(Reverse(ScriptHashFrequency::new(
+            curr_scripthash,
+            total_entries,
+        )));
     }
 }
 
