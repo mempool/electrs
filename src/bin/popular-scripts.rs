@@ -11,8 +11,8 @@ use std::cmp::Reverse;
 // How to run:
 export ELECTRS_DATA=/path/to/electrs
 cargo run \
-  -q --release --bin popular-scripts \
-  --db-path $ELECTRS_DATA/db/mainnet \
+  -q --release --bin popular-scripts -- \
+  --db-dir $ELECTRS_DATA/db \
   > ./contrib/popular-scripts.txt
 */
 
