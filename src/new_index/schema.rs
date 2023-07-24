@@ -1445,6 +1445,7 @@ impl TxHistoryRow {
         bincode::options()
             .with_big_endian()
             .with_fixint_encoding()
+            .allow_trailing_bytes()
             .serialize(&(code, full_hash(hash), height))
             .unwrap()
     }
@@ -1454,6 +1455,7 @@ impl TxHistoryRow {
             key: bincode::options()
                 .with_big_endian()
                 .with_fixint_encoding()
+                .allow_trailing_bytes()
                 .serialize(&self.key)
                 .unwrap(),
             value: vec![],
@@ -1464,6 +1466,7 @@ impl TxHistoryRow {
         let key = bincode::options()
             .with_big_endian()
             .with_fixint_encoding()
+            .allow_trailing_bytes()
             .deserialize(&row.key)
             .expect("failed to deserialize TxHistoryKey");
         TxHistoryRow { key }
