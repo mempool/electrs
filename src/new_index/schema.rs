@@ -383,7 +383,9 @@ impl ChainQuery {
             self.store
                 .txstore_db
                 .get(&BlockRow::txids_key(full_hash(&hash[..])))
-                .map(|val| bincode::deserialize(&val).expect("failed to parse block txids"))
+                .map(|val| {
+                    bincode_util::deserialize_little(&val).expect("failed to parse block txids")
+                })
         };
 
         txids.and_then(|txid_vec| {
