@@ -43,19 +43,19 @@ cargo fmt $@ -q --all -- --check
 
 TESTNAME="Running cargo clippy check no features"
 echo "$TESTNAME"
-cargo clippy $@ -q
+cargo clippy $@ -q -- -D warnings
 
 TESTNAME="Running cargo clippy check electrum-discovery"
 echo "$TESTNAME"
-cargo clippy $@ -q -F electrum-discovery
+cargo clippy $@ -q -F electrum-discovery -- -D warnings
 
 TESTNAME="Running cargo clippy check liquid"
 echo "$TESTNAME"
-cargo clippy $@ -q -F liquid
+cargo clippy $@ -q -F liquid -- -D warnings
 
 TESTNAME="Running cargo clippy check electrum-discovery + liquid"
 echo "$TESTNAME"
-cargo clippy $@ -q -F electrum-discovery,liquid
+cargo clippy $@ -q -F electrum-discovery,liquid -- -D warnings
 
 TESTNAME="Running cargo test with all features"
 echo "$TESTNAME"
