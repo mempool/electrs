@@ -82,25 +82,8 @@ pub enum DBFlush {
 
 impl DB {
     pub fn open(path: &Path, config: &Config) -> DB {
-        debug!("opening DB at {:?}", path);
-        let mut db_opts = rocksdb::Options::default();
-        db_opts.create_if_missing(true);
-        db_opts.set_max_open_files(100_000); // TODO: make sure to `ulimit -n` this process correctly
-        db_opts.set_compaction_style(rocksdb::DBCompactionStyle::Level);
-        db_opts.set_compression_type(rocksdb::DBCompressionType::None);
-        db_opts.set_target_file_size_base(1_073_741_824);
-        db_opts.set_write_buffer_size(256 << 20);
-        db_opts.set_disable_auto_compactions(true); // for initial bulk load
-
-        // db_opts.set_advise_random_on_open(???);
-        db_opts.set_compaction_readahead_size(1 << 20);
-        db_opts.increase_parallelism(2);
-
-        // let mut block_opts = rocksdb::BlockBasedOptions::default();
-        // block_opts.set_block_size(???);
-
         let db = DB {
-            db: rocksdb::DB::open(&db_opts, path).expect("failed to open RocksDB"),
+            db: open_raw_db(path),
         };
         db.verify_compatibility(config);
         db
@@ -212,4 +195,25 @@ impl DB {
             Some(_) => (),
         }
     }
+}
+
+pub fn open_raw_db<T: rocksdb::ThreadMode>(path: &Path) -> rocksdb::DBWithThreadMode<T> {
+    debug!("opening DB at {:?}", path);
+    let mut db_opts = rocksdb::Options::default();
+    db_opts.create_if_missing(true);
+    db_opts.set_max_open_files(100_000); // TODO: make sure to `ulimit -n` this process correctly
+    db_opts.set_compaction_style(rocksdb::DBCompactionStyle::Level);
+    db_opts.set_compression_type(rocksdb::DBCompressionType::None);
+    db_opts.set_target_file_size_base(1_073_741_824);
+    db_opts.set_write_buffer_size(256 << 20);
+    db_opts.set_disable_auto_compactions(true); // for initial bulk load
+
+    // db_opts.set_advise_random_on_open(???);
+    db_opts.set_compaction_readahead_size(1 << 20);
+    db_opts.increase_parallelism(2);
+
+    // let mut block_opts = rocksdb::BlockBasedOptions::default();
+    // block_opts.set_block_size(???);
+
+    rocksdb::DBWithThreadMode::<T>::open(&db_opts, path).expect("failed to open RocksDB")
 }
