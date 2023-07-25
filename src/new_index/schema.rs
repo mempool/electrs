@@ -386,7 +386,7 @@ impl ChainQuery {
         };
 
         txids.and_then(|txid_vec| {
-            let mut transactions = Vec::new();
+            let mut transactions = Vec::with_capacity(txid_vec.len());
 
             for txid in txid_vec {
                 match self.lookup_txn(&txid, Some(hash)) {
