@@ -2,6 +2,14 @@
 #source "${HOME}/.cargo/env"
 #export PATH="${HOME}/.cargo/bin:${PATH}"
 
+## These are the environment vars to set the
+## thread count and the threshold.
+## Lower threshold means more matches to pre-cache.
+## Thread count should be equal to cores.
+#
+# JOB_THREAD_COUNT=8
+# HIGH_USAGE_THRESHOLD=3000
+
 cd "${HOME}/electrs"
 # stdout only prints the results
 # stderr prints out a message every 10 million rows
@@ -11,3 +19,7 @@ cargo run \
 	-- \
 	--db-dir "/electrs" \
 	> ./contrib/popular-scripts.txt
+
+# Sorting by byte (hex) order makes pre-cache faster
+cat ./contrib/popular-scripts.txt | sort | uniq > tmp.txt
+mv tmp.txt ./contrib/popular-scripts.txt
