@@ -206,7 +206,7 @@ impl Mempool {
                 TxHistoryInfo::Funding(info) => {
                     // Liquid requires some additional information from the txo that's not available in the TxHistoryInfo index.
                     #[cfg(feature = "liquid")]
-                    let txo = self.lookup_txo(&entry.get_funded_outpoint());
+                    let txo = self.lookup_txo(&entry.get_funded_outpoint())?;
 
                     Some(Utxo {
                         txid: deserialize(&info.txid).expect("invalid txid"),
@@ -502,12 +502,18 @@ impl Mempool {
         processed_count
     }
 
-    pub fn lookup_txo(&self, outpoint: &OutPoint) -> TxOut {
+    /// Returns None if the lookup fails (mempool transaction RBF-ed etc.)
+    pub fn lookup_txo(&self, outpoint: &OutPoint) -> Option<TxOut> {
         let mut outpoints = BTreeSet::new();
         outpoints.insert(*outpoint);
-        self.lookup_txos(&outpoints).remove(outpoint).unwrap()
+        // This can possibly be None now
+        self.lookup_txos(&outpoints).remove(outpoint)
     }
 
+    /// For a given set of OutPoints, return a HashMap<OutPoint, TxOut>
+    ///
+    /// Not all OutPoints from mempool transactions are guaranteed to be there.
+    /// Ensure you deal with the None case in your logic.
     pub fn lookup_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
         let _timer = self
             .latency
