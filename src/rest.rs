@@ -981,9 +981,8 @@ fn handle_request(
             let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query);
 
             let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
-            tx.remove(0);
 
-            json_response(tx, ttl)
+            json_response(tx.remove(0), ttl)
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
