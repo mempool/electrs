@@ -343,7 +343,9 @@ impl Mempool {
             }
         };
         // Add new transactions
-        self.add(to_add);
+        if to_add.len() > self.add(to_add) {
+            debug!("Mempool update added less transactions than expected");
+        }
         // Remove missing transactions
         self.remove(to_remove);
 
@@ -382,6 +384,7 @@ impl Mempool {
     /// Add transactions to the mempool.
     ///
     /// The return value is the number of transactions processed.
+    #[must_use = "Must deal with [[input vec's length]] > [[result]]."]
     fn add(&mut self, txs: Vec<Transaction>) -> usize {
         self.delta
             .with_label_values(&["add"])
