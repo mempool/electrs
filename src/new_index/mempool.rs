@@ -396,14 +396,21 @@ impl Mempool {
         }
         debug!("Adding {} transactions to Mempool", txlen);
 
-        // Phase 1: index history and spend edges (some txos can be missing)
-        let txids: Vec<_> = txs.iter().map(Transaction::txid).collect();
+        let mut txids = Vec::with_capacity(txs.len());
+        // Phase 1: add to txstore
+        for tx in txs {
+            let txid = tx.txid();
+            txids.push(txid);
+            self.txstore.insert(txid, tx);
+        }
+
+        // Phase 2: index history and spend edges (some txos can be missing)
         let txos = self.lookup_txos(&self.get_prevouts(&txids));
 
         // Count how many transactions were actually processed.
         let mut processed_count = 0;
 
-        // Phase 2: Iterate over the transactions and do the following:
+        // Phase 3: Iterate over the transactions and do the following:
         // 1. Find all of the TxOuts of each input parent using `txos`
         // 2. If any parent wasn't found, skip parsing this transaction
         // 3. Insert TxFeeInfo into info.
@@ -412,14 +419,8 @@ impl Mempool {
         // 6. Insert all TxHistory into history.
         // 7. Insert the tx edges into edges (HashMap of (Outpoint, (Txid, vin)))
         // 8. (Liquid only) Parse assets of tx.
-        for owned_tx in txs {
-            let txid = owned_tx.txid();
-
-            let entry = self.txstore.entry(txid);
-            // Note: This fn doesn't overwrite existing transactions,
-            // But that's ok, we didn't insert unrelated txes
-            // into any given txid anyways, so this will always insert.
-            let tx = &*entry.or_insert_with(|| owned_tx);
+        for txid in txids {
+            let tx = self.txstore.get(&txid).expect("missing tx from txstore");
 
             let prevouts = match extract_tx_prevouts(tx, &txos, false) {
                 Ok(v) => v,
