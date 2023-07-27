@@ -53,3 +53,7 @@ where
         .allow_trailing_bytes()
         .deserialize(bytes)
 }
+
+#[cfg(test)]
+#[path = "./bincode_tests.rs"]
+mod bincode_tests;
