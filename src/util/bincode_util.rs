@@ -10,7 +10,9 @@
 //! | All others   | little | fixed      | allow          | unlimited  |
 //! +--------------+--------+------------+----------------+------------+
 
+// We only want people to use bincode_util
 use bincode::Options;
+use bincode_do_not_use_directly as bincode;
 
 pub fn serialize_big<T>(value: &T) -> Result<Vec<u8>, bincode::Error>
 where

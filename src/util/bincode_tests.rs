@@ -21,6 +21,9 @@ and allow trailing to allow in order to match the previous behavior.
 (note: TxHistory was using Big Endian by explicitly setting it to big.)
 
 */
+
+use bincode_do_not_use_directly as bincode;
+
 #[test]
 fn bincode_settings() {
     let value = TestStruct::new();
