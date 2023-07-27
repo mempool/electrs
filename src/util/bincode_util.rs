@@ -1,57 +1,66 @@
-use bincode::Options;
+//! This module creates two sets of serialize and deserialize for bincode.
+//! They explicitly spell out the bincode settings so that switching to
+//! new versions in the future is less error prone.
+//!
+//! This is a list of all the row types and their settings for bincode.
+//! +--------------+--------+------------+----------------+------------+
+//! |              | Endian | Int Length | Allow Trailing | Byte Limit |
+//! +--------------+--------+------------+----------------+------------+
+//! | TxHistoryRow | big    | fixed      | allow          | unlimited  |
+//! | All others   | little | fixed      | allow          | unlimited  |
+//! +--------------+--------+------------+----------------+------------+
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub enum IntEncoding {
-    VarInt,
-    FixInt,
-}
+use bincode::Options;
 
 pub fn serialize_big<T>(value: &T) -> Result<Vec<u8>, bincode::Error>
 where
     T: ?Sized + serde::Serialize,
 {
-    bincode::options()
-        .with_big_endian()
-        .with_fixint_encoding()
-        .with_no_limit()
-        .allow_trailing_bytes()
-        .serialize(value)
+    big_endian().serialize(value)
 }
 
 pub fn deserialize_big<'a, T>(bytes: &'a [u8]) -> Result<T, bincode::Error>
 where
     T: serde::Deserialize<'a>,
 {
-    bincode::options()
-        .with_big_endian()
-        .with_fixint_encoding()
-        .with_no_limit()
-        .allow_trailing_bytes()
-        .deserialize(bytes)
+    big_endian().deserialize(bytes)
 }
 
 pub fn serialize_little<T>(value: &T) -> Result<Vec<u8>, bincode::Error>
 where
     T: ?Sized + serde::Serialize,
 {
-    bincode::options()
-        .with_little_endian()
-        .with_fixint_encoding()
-        .with_no_limit()
-        .allow_trailing_bytes()
-        .serialize(value)
+    little_endian().serialize(value)
 }
 
 pub fn deserialize_little<'a, T>(bytes: &'a [u8]) -> Result<T, bincode::Error>
 where
     T: serde::Deserialize<'a>,
 {
+    little_endian().deserialize(bytes)
+}
+
+/// This is the default settings for Options,
+/// but all explicitly spelled out, except for endianness.
+/// The following functions will add endianness.
+#[inline]
+fn options() -> impl Options {
     bincode::options()
-        .with_little_endian()
         .with_fixint_encoding()
         .with_no_limit()
         .allow_trailing_bytes()
-        .deserialize(bytes)
+}
+
+/// Adding the endian flag for big endian
+#[inline]
+fn big_endian() -> impl Options {
+    options().with_big_endian()
+}
+
+/// Adding the endian flag for little endian
+#[inline]
+fn little_endian() -> impl Options {
+    options().with_little_endian()
 }
 
 #[cfg(test)]
