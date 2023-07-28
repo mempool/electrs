@@ -206,9 +206,7 @@ impl Mempool {
                 TxHistoryInfo::Funding(info) => {
                     // Liquid requires some additional information from the txo that's not available in the TxHistoryInfo index.
                     #[cfg(feature = "liquid")]
-                    let txo = self
-                        .lookup_txo(&entry.get_funded_outpoint())
-                        .expect("missing txo");
+                    let txo = self.lookup_txo(&entry.get_funded_outpoint())?;
 
                     Some(Utxo {
                         txid: deserialize(&info.txid).expect("invalid txid"),
@@ -345,7 +343,9 @@ impl Mempool {
             }
         };
         // Add new transactions
-        self.add(to_add)?;
+        if to_add.len() > self.add(to_add) {
+            debug!("Mempool update added less transactions than expected");
+        }
         // Remove missing transactions
         self.remove(to_remove);
 
@@ -370,39 +370,66 @@ impl Mempool {
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) -> Result<()> {
         if self.txstore.get(txid).is_none() {
             if let Ok(tx) = daemon.getmempooltx(txid) {
-                self.add(vec![tx])?;
+                if self.add(vec![tx]) == 0 {
+                    return Err(format!(
+                        "Unable to add {txid} to mempool likely due to missing parents."
+                    )
+                    .into());
+                }
             }
         }
-
         Ok(())
     }
 
-    fn add(&mut self, txs: Vec<Transaction>) -> Result<()> {
+    /// Add transactions to the mempool.
+    ///
+    /// The return value is the number of transactions processed.
+    #[must_use = "Must deal with [[input vec's length]] > [[result]]."]
+    fn add(&mut self, txs: Vec<Transaction>) -> usize {
         self.delta
             .with_label_values(&["add"])
             .observe(txs.len() as f64);
         let _timer = self.latency.with_label_values(&["add"]).start_timer();
+        let txlen = txs.len();
+        if txlen == 0 {
+            return 0;
+        }
+        debug!("Adding {} transactions to Mempool", txlen);
 
-        let mut txids = vec![];
+        let mut txids = Vec::with_capacity(txs.len());
         // Phase 1: add to txstore
         for tx in txs {
             let txid = tx.txid();
             txids.push(txid);
             self.txstore.insert(txid, tx);
         }
-        // Phase 2: index history and spend edges (can fail if some txos cannot be found)
-        let txos = match self.lookup_txos(&self.get_prevouts(&txids)) {
-            Ok(txos) => txos,
-            Err(err) => {
-                warn!("lookup txouts failed: {}", err);
-                // TODO: should we remove txids from txstore?
-                return Ok(());
-            }
-        };
+
+        // Phase 2: index history and spend edges (some txos can be missing)
+        let txos = self.lookup_txos(&self.get_prevouts(&txids));
+
+        // Count how many transactions were actually processed.
+        let mut processed_count = 0;
+
+        // Phase 3: Iterate over the transactions and do the following:
+        // 1. Find all of the TxOuts of each input parent using `txos`
+        // 2. If any parent wasn't found, skip parsing this transaction
+        // 3. Insert TxFeeInfo into info.
+        // 4. Push TxOverview into recent tx queue.
+        // 5. Create the Spend and Fund TxHistory structs for inputs + outputs
+        // 6. Insert all TxHistory into history.
+        // 7. Insert the tx edges into edges (HashMap of (Outpoint, (Txid, vin)))
+        // 8. (Liquid only) Parse assets of tx.
         for txid in txids {
-            let tx = self.txstore.get(&txid).expect("missing mempool tx");
+            let tx = self.txstore.get(&txid).expect("missing tx from txstore");
+
+            let prevouts = match extract_tx_prevouts(tx, &txos, false) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Skipping tx {txid} missing parent error: {e}");
+                    continue;
+                }
+            };
             let txid_bytes = full_hash(&txid[..]);
-            let prevouts = extract_tx_prevouts(tx, &txos, false)?;
 
             // Get feeinfo for caching and recent tx overview
             let feeinfo = TxFeeInfo::new(tx, &prevouts, self.config.network_type);
@@ -472,18 +499,26 @@ impl Mempool {
                 &mut self.asset_history,
                 &mut self.asset_issuance,
             );
+
+            processed_count += 1;
         }
 
-        Ok(())
+        processed_count
     }
 
-    pub fn lookup_txo(&self, outpoint: &OutPoint) -> Result<TxOut> {
+    /// Returns None if the lookup fails (mempool transaction RBF-ed etc.)
+    pub fn lookup_txo(&self, outpoint: &OutPoint) -> Option<TxOut> {
         let mut outpoints = BTreeSet::new();
         outpoints.insert(*outpoint);
-        Ok(self.lookup_txos(&outpoints)?.remove(outpoint).unwrap())
+        // This can possibly be None now
+        self.lookup_txos(&outpoints).remove(outpoint)
     }
 
-    pub fn lookup_txos(&self, outpoints: &BTreeSet<OutPoint>) -> Result<HashMap<OutPoint, TxOut>> {
+    /// For a given set of OutPoints, return a HashMap<OutPoint, TxOut>
+    ///
+    /// Not all OutPoints from mempool transactions are guaranteed to be there.
+    /// Ensure you deal with the None case in your logic.
+    pub fn lookup_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
         let _timer = self
             .latency
             .with_label_values(&["lookup_txos"])
@@ -494,18 +529,21 @@ impl Mempool {
         let mempool_txos = outpoints
             .iter()
             .filter(|outpoint| !confirmed_txos.contains_key(outpoint))
-            .map(|outpoint| {
+            .flat_map(|outpoint| {
                 self.txstore
                     .get(&outpoint.txid)
                     .and_then(|tx| tx.output.get(outpoint.vout as usize).cloned())
                     .map(|txout| (*outpoint, txout))
-                    .chain_err(|| format!("missing outpoint {:?}", outpoint))
+                    .or_else(|| {
+                        warn!("missing outpoint {:?}", outpoint);
+                        None
+                    })
             })
-            .collect::<Result<HashMap<OutPoint, TxOut>>>()?;
+            .collect::<HashMap<OutPoint, TxOut>>();
 
         let mut txos = confirmed_txos;
         txos.extend(mempool_txos);
-        Ok(txos)
+        txos
     }
 
     fn get_prevouts(&self, txids: &[Txid]) -> BTreeSet<OutPoint> {

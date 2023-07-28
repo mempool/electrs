@@ -502,7 +502,7 @@ fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
     config: &Config,
-) -> Result<Vec<TransactionValue>, errors::Error> {
+) -> Vec<TransactionValue> {
     let outpoints = txs
         .iter()
         .flat_map(|(tx, _)| {
@@ -513,12 +513,11 @@ fn prepare_txs(
         })
         .collect();
 
-    let prevouts = query.lookup_txos(&outpoints)?;
+    let prevouts = query.lookup_txos(&outpoints);
 
-    Ok(txs
-        .into_iter()
+    txs.into_iter()
         .map(|(tx, blockid)| TransactionValue::new(tx, blockid, &prevouts, config))
-        .collect())
+        .collect()
 }
 
 #[tokio::main]
@@ -709,7 +708,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -786,7 +785,7 @@ fn handle_request(
             // XXX orphraned blocks alway get TTL_SHORT
             let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
 
-            json_maybe_error_response(prepare_txs(txs, query, config), ttl)
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
@@ -874,7 +873,7 @@ fn handle_request(
                 );
             }
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -907,7 +906,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (
             &Method::GET,
@@ -938,7 +937,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -981,9 +980,9 @@ fn handle_request(
             let blockid = query.chain().tx_confirming_block(&hash);
             let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query);
 
-            let tx = prepare_txs(vec![(tx, blockid)], query, config).map(|mut v| v.remove(0));
+            let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
 
-            json_maybe_error_response(tx, ttl)
+            json_response(tx.remove(0), ttl)
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
@@ -1106,7 +1105,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
@@ -1117,7 +1116,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
@@ -1188,7 +1187,7 @@ fn handle_request(
                     .map(|(tx, blockid)| (tx, Some(blockid))),
             );
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1214,7 +1213,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1228,7 +1227,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1281,26 +1280,26 @@ fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, Htt
         .unwrap())
 }
 
-fn json_maybe_error_response<T: Serialize>(
-    value: Result<T, errors::Error>,
-    ttl: u32,
-) -> Result<Response<Body>, HttpError> {
-    let response = Response::builder()
-        .header("Content-Type", "application/json")
-        .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .header("X-Powered-By", &**VERSION_STRING);
-    Ok(match value {
-        Ok(v) => response
-            .body(Body::from(serde_json::to_string(&v)?))
-            .expect("Valid http response"),
-        Err(e) => response
-            .status(500)
-            .body(Body::from(serde_json::to_string(
-                &json!({ "error": e.to_string() }),
-            )?))
-            .expect("Valid http response"),
-    })
-}
+// fn json_maybe_error_response<T: Serialize>(
+//     value: Result<T, errors::Error>,
+//     ttl: u32,
+// ) -> Result<Response<Body>, HttpError> {
+//     let response = Response::builder()
+//         .header("Content-Type", "application/json")
+//         .header("Cache-Control", format!("public, max-age={:}", ttl))
+//         .header("X-Powered-By", &**VERSION_STRING);
+//     Ok(match value {
+//         Ok(v) => response
+//             .body(Body::from(serde_json::to_string(&v)?))
+//             .expect("Valid http response"),
+//         Err(e) => response
+//             .status(500)
+//             .body(Body::from(serde_json::to_string(
+//                 &json!({ "error": e.to_string() }),
+//             )?))
+//             .expect("Valid http response"),
+//     })
+// }
 
 fn blocks(
     query: &Query,
