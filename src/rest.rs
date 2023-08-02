@@ -12,7 +12,7 @@ use crate::util::{
 use {bitcoin::consensus::encode, std::str::FromStr};
 
 use bitcoin::blockdata::opcodes;
-use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::hashes::hex::{Error as HashHexError, FromHex, ToHex};
 use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
@@ -1127,6 +1127,26 @@ fn handle_request(
                 .collect();
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+        (&Method::POST, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            match txid_strings
+                .into_iter()
+                .map(|txid| Txid::from_hex(&txid))
+                .collect::<Result<Vec<Txid>, HashHexError>>()
+            {
+                Ok(txids) => {
+                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
+                        .iter()
+                        .filter_map(|txid| query.mempool().lookup_txn(txid).map(|tx| (tx, None)))
+                        .collect();
+
+                    json_response(prepare_txs(txs, query, config), TTL_SHORT)
+                }
+                Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
+            }
         }
         (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
