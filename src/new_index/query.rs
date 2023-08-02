@@ -13,7 +13,7 @@ use crate::util::{is_spendable, BlockId, Bytes, TransactionStatus};
 
 #[cfg(feature = "liquid")]
 use crate::{
-    chain::{asset::AssetRegistryLock, AssetId},
+    chain::AssetId,
     elements::{lookup_asset, AssetRegistry, AssetSorting, LiquidAsset},
 };
 
@@ -241,12 +241,7 @@ impl Query {
 
     #[cfg(feature = "liquid")]
     pub fn lookup_asset(&self, asset_id: &AssetId) -> Result<Option<LiquidAsset>> {
-        lookup_asset(
-            self,
-            self.asset_db.as_ref().map(AssetRegistryLock::RwLock),
-            asset_id,
-            None,
-        )
+        lookup_asset(self, self.asset_db.as_ref(), asset_id, None)
     }
 
     #[cfg(feature = "liquid")]
@@ -265,13 +260,8 @@ impl Query {
         let results = results
             .into_iter()
             .map(|(asset_id, metadata)| {
-                lookup_asset(
-                    self,
-                    Some(AssetRegistryLock::RwLockReadGuard(&asset_db)),
-                    asset_id,
-                    Some(metadata),
-                )?
-                .chain_err(|| "missing registered asset")
+                lookup_asset(self, None, asset_id, Some(metadata))?
+                    .chain_err(|| "missing registered asset")
             })
             .collect::<Result<Vec<_>>>()?;
         Ok((total_num, results))
