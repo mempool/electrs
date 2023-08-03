@@ -12,7 +12,7 @@ use crate::util::{
 use {bitcoin::consensus::encode, std::str::FromStr};
 
 use bitcoin::blockdata::opcodes;
-use bitcoin::hashes::hex::{Error as HashHexError, FromHex, ToHex};
+use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
@@ -1135,7 +1135,7 @@ fn handle_request(
             match txid_strings
                 .into_iter()
                 .map(|txid| Txid::from_hex(&txid))
-                .collect::<Result<Vec<Txid>, HashHexError>>()
+                .collect::<Result<Vec<Txid>, _>>()
             {
                 Ok(txids) => {
                     let txs: Vec<(Transaction, Option<BlockId>)> = {
@@ -1146,7 +1146,7 @@ fn handle_request(
                             .collect()
                     };
 
-                    json_response(prepare_txs(txs, query, config), TTL_SHORT)
+                    json_response(prepare_txs(txs, query, config), 0)
                 }
                 Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
             }
