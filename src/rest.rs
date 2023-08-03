@@ -525,6 +525,16 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
+/// Prepare transactions to be serialized in a JSON response
+///
+/// ## Arguments
+///
+/// * `txs`
+/// * `query`
+/// * `config`
+/// * `filter_missing_prevouts` - boolean flag indicating whether transactions with missing prevouts should be filtered out of the response.
+/// Set to true if transactions in the result must have correct fees and prevouts.
+/// Set to false if the response must include every supplied transaction.
 fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
