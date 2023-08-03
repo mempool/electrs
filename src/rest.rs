@@ -1138,10 +1138,13 @@ fn handle_request(
                 .collect::<Result<Vec<Txid>, HashHexError>>()
             {
                 Ok(txids) => {
-                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
-                        .iter()
-                        .filter_map(|txid| query.mempool().lookup_txn(txid).map(|tx| (tx, None)))
-                        .collect();
+                    let txs: Vec<(Transaction, Option<BlockId>)> = {
+                        let mempool = query.mempool();
+                        txids
+                            .iter()
+                            .filter_map(|txid| mempool.lookup_txn(txid).map(|tx| (tx, None)))
+                            .collect()
+                    };
 
                     json_response(prepare_txs(txs, query, config), TTL_SHORT)
                 }
