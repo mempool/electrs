@@ -69,7 +69,7 @@ struct BlockValue {
     #[cfg(not(feature = "liquid"))]
     bits: u32,
     #[cfg(not(feature = "liquid"))]
-    difficulty: u64,
+    difficulty: f64,
 
     #[cfg(feature = "liquid")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,7 +78,7 @@ struct BlockValue {
 
 impl BlockValue {
     #[cfg_attr(feature = "liquid", allow(unused_variables))]
-    fn new(blockhm: BlockHeaderMeta, network: Network) -> Self {
+    fn new(blockhm: BlockHeaderMeta) -> Self {
         let header = blockhm.header_entry.header();
         BlockValue {
             id: header.block_hash().to_hex(),
@@ -106,12 +106,33 @@ impl BlockValue {
             #[cfg(not(feature = "liquid"))]
             nonce: header.nonce,
             #[cfg(not(feature = "liquid"))]
-            difficulty: header.difficulty(bitcoin::Network::from(network)),
+            difficulty: difficulty_new(header),
 
             #[cfg(feature = "liquid")]
             ext: Some(json!(header.ext)),
         }
     }
+}
+
+/// Calculate the difficulty of a BlockHeader
+/// using Bitcoin Core code ported to Rust.
+///
+/// https://github.com/bitcoin/bitcoin/blob/v25.0/src/rpc/blockchain.cpp#L75-L97
+#[cfg_attr(feature = "liquid", allow(dead_code))]
+fn difficulty_new(bh: &bitcoin::BlockHeader) -> f64 {
+    let mut n_shift = bh.bits >> 24 & 0xff;
+    let mut d_diff = (0x0000ffff as f64) / ((bh.bits & 0x00ffffff) as f64);
+
+    while n_shift < 29 {
+        d_diff *= 256.0;
+        n_shift += 1;
+    }
+    while n_shift > 29 {
+        d_diff /= 256.0;
+        n_shift -= 1;
+    }
+
+    d_diff
 }
 
 #[derive(Serialize, Deserialize)]
@@ -502,7 +523,7 @@ fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
     config: &Config,
-) -> Result<Vec<TransactionValue>, errors::Error> {
+) -> Vec<TransactionValue> {
     let outpoints = txs
         .iter()
         .flat_map(|(tx, _)| {
@@ -513,12 +534,11 @@ fn prepare_txs(
         })
         .collect();
 
-    let prevouts = query.lookup_txos(&outpoints)?;
+    let prevouts = query.lookup_txos(&outpoints);
 
-    Ok(txs
-        .into_iter()
+    txs.into_iter()
         .map(|(tx, blockid)| TransactionValue::new(tx, blockid, &prevouts, config))
-        .collect())
+        .collect()
 }
 
 #[tokio::main]
@@ -682,7 +702,7 @@ fn handle_request(
                 .chain()
                 .get_block_with_meta(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
-            let block_value = BlockValue::new(blockhm, config.network_type);
+            let block_value = BlockValue::new(blockhm);
             json_response(block_value, TTL_LONG)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
@@ -698,6 +718,18 @@ fn handle_request(
                 .get_block_txids(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
+        }
+        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), None, None) => {
+            let hash = BlockHash::from_hex(hash)?;
+            let txs = query
+                .chain()
+                .get_block_txs(&hash)
+                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
+                .into_iter()
+                .map(|tx| (tx, None))
+                .collect();
+
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -774,7 +806,7 @@ fn handle_request(
             // XXX orphraned blocks alway get TTL_SHORT
             let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
 
-            json_maybe_error_response(prepare_txs(txs, query, config), ttl)
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
@@ -862,7 +894,7 @@ fn handle_request(
                 );
             }
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -895,7 +927,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (
             &Method::GET,
@@ -926,7 +958,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -969,9 +1001,9 @@ fn handle_request(
             let blockid = query.chain().tx_confirming_block(&hash);
             let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query);
 
-            let tx = prepare_txs(vec![(tx, blockid)], query, config).map(|mut v| v.remove(0));
+            let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
 
-            json_maybe_error_response(tx, ttl)
+            json_response(tx.remove(0), ttl)
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
@@ -1094,7 +1126,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
@@ -1105,7 +1137,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
@@ -1176,7 +1208,7 @@ fn handle_request(
                     .map(|(tx, blockid)| (tx, Some(blockid))),
             );
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1202,7 +1234,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1216,7 +1248,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_maybe_error_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1269,26 +1301,26 @@ fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, Htt
         .unwrap())
 }
 
-fn json_maybe_error_response<T: Serialize>(
-    value: Result<T, errors::Error>,
-    ttl: u32,
-) -> Result<Response<Body>, HttpError> {
-    let response = Response::builder()
-        .header("Content-Type", "application/json")
-        .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .header("X-Powered-By", &**VERSION_STRING);
-    Ok(match value {
-        Ok(v) => response
-            .body(Body::from(serde_json::to_string(&v)?))
-            .expect("Valid http response"),
-        Err(e) => response
-            .status(500)
-            .body(Body::from(serde_json::to_string(
-                &json!({ "error": e.to_string() }),
-            )?))
-            .expect("Valid http response"),
-    })
-}
+// fn json_maybe_error_response<T: Serialize>(
+//     value: Result<T, errors::Error>,
+//     ttl: u32,
+// ) -> Result<Response<Body>, HttpError> {
+//     let response = Response::builder()
+//         .header("Content-Type", "application/json")
+//         .header("Cache-Control", format!("public, max-age={:}", ttl))
+//         .header("X-Powered-By", &**VERSION_STRING);
+//     Ok(match value {
+//         Ok(v) => response
+//             .body(Body::from(serde_json::to_string(&v)?))
+//             .expect("Valid http response"),
+//         Err(e) => response
+//             .status(500)
+//             .body(Body::from(serde_json::to_string(
+//                 &json!({ "error": e.to_string() }),
+//             )?))
+//             .expect("Valid http response"),
+//     })
+// }
 
 fn blocks(
     query: &Query,
@@ -1314,7 +1346,7 @@ fn blocks(
         current_hash = blockhm.header_entry.header().prev_blockhash;
 
         #[allow(unused_mut)]
-        let mut value = BlockValue::new(blockhm, config.network_type);
+        let mut value = BlockValue::new(blockhm);
 
         #[cfg(feature = "liquid")]
         {
@@ -1521,5 +1553,129 @@ mod tests {
             .ok_or(HttpError::from("notexist absent or not a u64".to_string()));
 
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_difficulty_new() {
+        use super::difficulty_new;
+
+        let vectors = [
+            (
+                // bits in header
+                0x17053894,
+                // expected output (Rust)
+                53911173001054.586,
+                // Block hash where found (for getblockheader)
+                "0000000000000000000050b050758dd2ccb0ba96ad5e95db84efd2f6c05e4e90",
+                // difficulty returned by Bitcoin Core v25
+                "53911173001054.59",
+            ),
+            (
+                0x1a0c2a12,
+                1379192.2882280778,
+                "0000000000000bc7636ffbc1cf90cf4a2674de7fcadbc6c9b63d31f07cb3c2c2",
+                "1379192.288228078",
+            ),
+            (
+                0x19262222,
+                112628548.66634709,
+                "000000000000000996b1f06771a81bcf7b15c5f859b6f8329016f01b0442ca72",
+                "112628548.6663471",
+            ),
+            (
+                0x1d00c428,
+                1.3050621315915245,
+                "0000000034014d731a3e1ad6078662ce19b08179dcc7ec0f5f717d4b58060736",
+                "1.305062131591525",
+            ),
+            (
+                0,
+                f64::INFINITY,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking edge cases]",
+            ),
+            (
+                0x00000001,
+                4.523059468369196e74,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking edge cases]",
+            ),
+            (
+                0x1d00ffff,
+                1.0,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET]",
+            ),
+            (
+                0x1c7fff80,
+                2.0,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET >> 1]",
+            ),
+            (
+                0x1b00ffff,
+                65536.0,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET >> 16]",
+            ),
+            (
+                0x1a7fff80,
+                131072.0,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET >> 17]",
+            ),
+            (
+                0x1d01fffe,
+                0.5,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET << 1]",
+            ),
+            (
+                0x1f000080,
+                0.007812380790710449,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking 2**255]",
+            ),
+            (
+                0x1e00ffff,
+                0.00390625, // 2.0**-8
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET << 8]",
+            ),
+            (
+                0x1e00ff00,
+                0.0039215087890625,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET << 8 - two `f` chars]",
+            ),
+            (
+                0x1f0000ff,
+                0.0039215087890625,
+                "[No Blockhash]",
+                "[No Core difficulty, just checking MAX_TARGET << 8]",
+            ),
+        ];
+
+        let to_bh = |b| bitcoin::BlockHeader {
+            version: 1,
+            prev_blockhash: "0000000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
+            merkle_root: "0000000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
+            time: 0,
+            bits: b,
+            nonce: 0,
+        };
+
+        for (bits, expected, hash, core_difficulty) in vectors {
+            let result = difficulty_new(&to_bh(bits));
+            assert_eq!(
+                result, expected,
+                "Block {} difficulty is {} but Core difficulty is {}",
+                hash, result, core_difficulty,
+            );
+        }
     }
 }
