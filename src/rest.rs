@@ -155,14 +155,8 @@ impl TransactionValue {
         blockid: Option<BlockId>,
         txos: &HashMap<OutPoint, TxOut>,
         config: &Config,
-        allow_missing_prevouts: bool,
     ) -> Result<TransactionValue, errors::Error> {
-        let prevouts_result = extract_tx_prevouts(&tx, txos, allow_missing_prevouts);
-        let prevouts = if allow_missing_prevouts {
-            prevouts_result.expect("Cannot Err when allow_missing is true")
-        } else {
-            prevouts_result?
-        };
+        let prevouts = extract_tx_prevouts(&tx, txos, false)?;
 
         let vins: Vec<TxInValue> = tx
             .input
@@ -527,19 +521,17 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
 
 /// Prepare transactions to be serialized in a JSON response
 ///
+/// Any transactions with missing prevouts will be filtered out of the response, rather than returned with incorrect data.
+///
 /// ## Arguments
 ///
 /// * `txs`
 /// * `query`
 /// * `config`
-/// * `filter_missing_prevouts` - boolean flag indicating whether transactions with missing prevouts should be filtered out of the response.
-/// Set to true if transactions in the result must have correct fees and prevouts.
-/// Set to false if the response must include every supplied transaction.
 fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
     config: &Config,
-    filter_missing_prevouts: bool,
 ) -> Vec<TransactionValue> {
     let outpoints = txs
         .iter()
@@ -554,9 +546,7 @@ fn prepare_txs(
     let prevouts = query.lookup_txos(&outpoints);
 
     txs.into_iter()
-        .filter_map(|(tx, blockid)| {
-            TransactionValue::new(tx, blockid, &prevouts, config, !filter_missing_prevouts).ok()
-        })
+        .filter_map(|(tx, blockid)| TransactionValue::new(tx, blockid, &prevouts, config).ok())
         .collect()
 }
 
@@ -748,7 +738,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -825,7 +815,7 @@ fn handle_request(
             // XXX orphraned blocks alway get TTL_SHORT
             let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
 
-            json_response(prepare_txs(txs, query, config, false), ttl)
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(script_type @ &"address"), Some(script_str), None, None, None)
         | (&Method::GET, Some(script_type @ &"scripthash"), Some(script_str), None, None, None) => {
@@ -913,7 +903,7 @@ fn handle_request(
                 );
             }
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -946,7 +936,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (
             &Method::GET,
@@ -977,7 +967,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         (
@@ -1020,7 +1010,7 @@ fn handle_request(
             let blockid = query.chain().tx_confirming_block(&hash);
             let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query);
 
-            let mut tx = prepare_txs(vec![(tx, blockid)], query, config, true);
+            let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
 
             if tx.is_empty() {
                 http_message(
@@ -1153,7 +1143,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, true), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
@@ -1164,7 +1154,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, true), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
@@ -1235,7 +1225,7 @@ fn handle_request(
                     .map(|(tx, blockid)| (tx, Some(blockid))),
             );
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1261,7 +1251,7 @@ fn handle_request(
                 .map(|(tx, blockid)| (tx, Some(blockid)))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
@@ -1275,7 +1265,7 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config, false), TTL_SHORT)
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
         #[cfg(feature = "liquid")]
