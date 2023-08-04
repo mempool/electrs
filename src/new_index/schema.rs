@@ -1667,10 +1667,10 @@ fn from_utxo_cache(utxos_cache: CachedUtxoMap, chain: &ChainQuery) -> UtxoMap {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "liquid"))]
 mod tests {
     use super::{DBRow, TxHistoryRow};
-    use elements::confidential::Value;
+    use crate::chain::Value;
     use std::convert::TryInto;
 
     /// This test is the only place where bincode uses non-default settings.

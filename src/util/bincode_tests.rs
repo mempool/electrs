@@ -36,42 +36,42 @@ fn bincode_settings() {
     large[0..56].copy_from_slice(&decoded);
 
     // Using functions: Little endian, Fixint, Allow trailing, Unlimited
-    println!("{:?}", bincode::serialize(&value).unwrap());
-    println!("{:?}", bincode::deserialize::<TestStruct>(&large).unwrap());
+    assert_eq!(bincode::serialize(&value).unwrap(), &decoded);
+    assert_eq!(bincode::deserialize::<TestStruct>(&large).unwrap(), value);
 
     // Using Config (deprecated)
     // Little endian, fixint, Allow trailing, Unlimited
     #[allow(deprecated)]
     {
-        println!("{:?}", bincode::config().serialize(&value).unwrap());
-        println!(
-            "{:?}",
-            bincode::config().deserialize::<TestStruct>(&large).unwrap()
+        assert_eq!(bincode::config().serialize(&value).unwrap(), &decoded);
+        assert_eq!(
+            bincode::config().deserialize::<TestStruct>(&large).unwrap(),
+            value
         );
     }
 
     // Using Options
     // Little endian, VARINT (different), Reject trailing (different), unlimited
     use bincode::Options;
-    println!(
-        "{:?}",
+    assert_eq!(
         bincode::options()
             .with_fixint_encoding()
             .allow_trailing_bytes()
             .serialize(&value)
-            .unwrap()
+            .unwrap(),
+        &decoded
     );
-    println!(
-        "{:?}",
+    assert_eq!(
         bincode::options()
             .with_fixint_encoding()
             .allow_trailing_bytes()
             .deserialize::<TestStruct>(&large)
-            .unwrap()
+            .unwrap(),
+        value
     );
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct TestStruct {
     a: u64,
     b: [u8; 8],
@@ -79,19 +79,19 @@ struct TestStruct {
     d: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 enum TestData {
     Foo(FooStruct),
     Bar(BarStruct),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct FooStruct {
     a: u64,
     b: [u8; 8],
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BarStruct {
     a: u64,
     b: [u8; 8],
