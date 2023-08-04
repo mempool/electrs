@@ -522,12 +522,6 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
 /// Prepare transactions to be serialized in a JSON response
 ///
 /// Any transactions with missing prevouts will be filtered out of the response, rather than returned with incorrect data.
-///
-/// ## Arguments
-///
-/// * `txs`
-/// * `query`
-/// * `config`
 fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
