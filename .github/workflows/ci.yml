@@ -63,4 +63,4 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Clippy with Features = ${{ matrix.features }}
-        run: cargo clippy ${{ matrix.features }}
+        run: cargo clippy ${{ matrix.features }} -- -D warnings
