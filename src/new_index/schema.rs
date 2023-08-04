@@ -291,6 +291,7 @@ impl Indexer {
     }
 
     fn add(&self, blocks: &[BlockEntry]) {
+        debug!("Adding {} blocks to Indexer", blocks.len());
         // TODO: skip orphaned blocks?
         let rows = {
             let _timer = self.start_timer("add_process");
@@ -309,6 +310,7 @@ impl Indexer {
     }
 
     fn index(&self, blocks: &[BlockEntry]) {
+        debug!("Indexing {} blocks with Indexer", blocks.len());
         let previous_txos_map = {
             let _timer = self.start_timer("index_lookup");
             lookup_txos(&self.store.txstore_db, &get_previous_txos(blocks), false)
