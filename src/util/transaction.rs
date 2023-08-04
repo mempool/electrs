@@ -85,25 +85,21 @@ pub fn is_spendable(txout: &TxOut) -> bool {
 pub fn extract_tx_prevouts<'a>(
     tx: &Transaction,
     txos: &'a HashMap<OutPoint, TxOut>,
-    allow_missing: bool,
 ) -> Result<HashMap<u32, &'a TxOut>, errors::Error> {
     tx.input
         .iter()
         .enumerate()
         .filter(|(_, txi)| has_prevout(txi))
-        .filter_map(|(index, txi)| {
-            Some(Ok((
+        .map(|(index, txi)| {
+            Ok((
                 index as u32,
-                match (allow_missing, txos.get(&txi.previous_output)) {
-                    (_, Some(txo)) => txo,
-                    (true, None) => return None,
-                    (false, None) => {
-                        return Some(Err(
-                            format!("missing outpoint {:?}", txi.previous_output).into()
-                        ));
+                match txos.get(&txi.previous_output) {
+                    Some(txo) => txo,
+                    None => {
+                        return Err(format!("missing outpoint {:?}", txi.previous_output).into());
                     }
                 },
-            )))
+            ))
         })
         .collect()
 }

@@ -155,8 +155,8 @@ impl TransactionValue {
         blockid: Option<BlockId>,
         txos: &HashMap<OutPoint, TxOut>,
         config: &Config,
-    ) -> Result<TransactionValue, errors::Error> {
-        let prevouts = extract_tx_prevouts(&tx, txos, false)?;
+    ) -> Result<Self, errors::Error> {
+        let prevouts = extract_tx_prevouts(&tx, txos)?;
 
         let vins: Vec<TxInValue> = tx
             .input
@@ -174,9 +174,9 @@ impl TransactionValue {
 
         let fee = get_tx_fee(&tx, &prevouts, config.network_type);
 
+        #[allow(clippy::unnecessary_cast)]
         Ok(TransactionValue {
             txid: tx.txid(),
-            #[allow(clippy::unnecessary_cast)]
             version: tx.version as u32,
             locktime: tx.lock_time,
             vin: vins,

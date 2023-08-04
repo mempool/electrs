@@ -422,7 +422,7 @@ impl Mempool {
         for txid in txids {
             let tx = self.txstore.get(&txid).expect("missing tx from txstore");
 
-            let prevouts = match extract_tx_prevouts(tx, &txos, false) {
+            let prevouts = match extract_tx_prevouts(tx, &txos) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("Skipping tx {txid} missing parent error: {e}");
