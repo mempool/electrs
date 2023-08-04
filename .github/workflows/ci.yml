@@ -36,6 +36,23 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - id: toolchain
+        uses: dtolnay/rust-toolchain@1.70
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with: # test cache key is different (adding test cfg is a re-compile)
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo test --package electrs --lib --all-features
+
   clippy:
     name: Linter
     runs-on: ubuntu-latest
