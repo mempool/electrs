@@ -1033,17 +1033,14 @@ fn handle_request(
                 .collect::<Result<Vec<Txid>, _>>()
             {
                 Ok(txids) => {
-                    let txs: Vec<(Transaction, Option<BlockId>)> = {
-                        txids
-                            .iter()
-                            .filter_map(|txid| {
-                                query
-                                    .lookup_txn(txid)
-                                    .map(|tx| (tx, query.chain().tx_confirming_block(txid)))
-                            })
-                            .collect()
-                    };
-
+                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
+                        .iter()
+                        .filter_map(|txid| {
+                            query
+                                .lookup_txn(txid)
+                                .map(|tx| (tx, query.chain().tx_confirming_block(txid)))
+                        })
+                        .collect();
                     json_response(prepare_txs(txs, query, config), 0)
                 }
                 Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
