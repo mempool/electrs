@@ -19,7 +19,7 @@ electrum-discovery = [ "electrum-client"]
 [dependencies]
 arrayref = "0.3.6"
 base64 = "0.13.0"
-bincode = "1.3.1"
+bincode-do-not-use-directly = { version = "1.3.1", package = "bincode" }
 bitcoin = { version = "0.28", features = [ "use-serde" ] }
 bounded-vec-deque = "0.1.1"
 clap = "2.33.3"
