@@ -155,9 +155,9 @@ impl TransactionValue {
         blockid: Option<BlockId>,
         txos: &HashMap<OutPoint, TxOut>,
         config: &Config,
-    ) -> Self {
-        let prevouts =
-            extract_tx_prevouts(&tx, txos, true).expect("Cannot Err when allow_missing is true");
+    ) -> Result<Self, errors::Error> {
+        let prevouts = extract_tx_prevouts(&tx, txos)?;
+
         let vins: Vec<TxInValue> = tx
             .input
             .iter()
@@ -174,9 +174,9 @@ impl TransactionValue {
 
         let fee = get_tx_fee(&tx, &prevouts, config.network_type);
 
-        TransactionValue {
+        #[allow(clippy::unnecessary_cast)]
+        Ok(TransactionValue {
             txid: tx.txid(),
-            #[allow(clippy::unnecessary_cast)]
             version: tx.version as u32,
             locktime: tx.lock_time,
             vin: vins,
@@ -185,7 +185,7 @@ impl TransactionValue {
             weight: tx.weight() as u32,
             fee,
             status: Some(TransactionStatus::from(blockid)),
-        }
+        })
     }
 }
 
@@ -519,6 +519,9 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
+/// Prepare transactions to be serialized in a JSON response
+///
+/// Any transactions with missing prevouts will be filtered out of the response, rather than returned with incorrect data.
 fn prepare_txs(
     txs: Vec<(Transaction, Option<BlockId>)>,
     query: &Query,
@@ -537,7 +540,7 @@ fn prepare_txs(
     let prevouts = query.lookup_txos(&outpoints);
 
     txs.into_iter()
-        .map(|(tx, blockid)| TransactionValue::new(tx, blockid, &prevouts, config))
+        .filter_map(|(tx, blockid)| TransactionValue::new(tx, blockid, &prevouts, config).ok())
         .collect()
 }
 
@@ -1003,7 +1006,15 @@ fn handle_request(
 
             let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
 
-            json_response(tx.remove(0), ttl)
+            if tx.is_empty() {
+                http_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Transaction missing prevouts",
+                    0,
+                )
+            } else {
+                json_response(tx.remove(0), ttl)
+            }
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
