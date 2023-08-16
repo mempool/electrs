@@ -1023,7 +1023,7 @@ fn handle_request(
                 json_response(tx.remove(0), ttl)
             }
         }
-        (&Method::POST, Some(&"txs"), None, None, None, None) => {
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"txs"), None, None, None) => {
             let txid_strings: Vec<String> =
                 serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
 
