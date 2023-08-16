@@ -106,6 +106,11 @@ pub struct BlockchainInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolInfo {
+    pub loaded: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct NetworkInfo {
     version: u64,
     subversion: String,
@@ -313,16 +318,21 @@ impl Daemon {
         }
         loop {
             let info = daemon.getblockchaininfo()?;
+            let mempool = daemon.getmempoolinfo()?;
 
-            if !info.initialblockdownload.unwrap_or(false) && info.blocks == info.headers {
+            if mempool.loaded
+                && !info.initialblockdownload.unwrap_or(false)
+                && info.blocks == info.headers
+            {
                 break;
             }
 
             warn!(
-                "waiting for bitcoind sync to finish: {}/{} blocks, verification progress: {:.3}%",
+                "waiting for bitcoind sync and mempool load to finish: {}/{} blocks, verification progress: {:.3}%, mempool loaded: {}",
                 info.blocks,
                 info.headers,
-                info.verificationprogress * 100.0
+                info.verificationprogress * 100.0,
+                mempool.loaded
             );
             signal.wait(Duration::from_secs(5), false)?;
         }
@@ -426,6 +436,11 @@ impl Daemon {
     pub fn getblockchaininfo(&self) -> Result<BlockchainInfo> {
         let info: Value = self.request("getblockchaininfo", json!([]))?;
         from_value(info).chain_err(|| "invalid blockchain info")
+    }
+
+    fn getmempoolinfo(&self) -> Result<MempoolInfo> {
+        let info: Value = self.request("getmempoolinfo", json!([]))?;
+        from_value(info).chain_err(|| "invalid mempool info")
     }
 
     fn getnetworkinfo(&self) -> Result<NetworkInfo> {
