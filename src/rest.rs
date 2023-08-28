@@ -52,7 +52,7 @@ const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
 // internal api prefix
-const INTERNAL_PREFIX: &str = "internal-api";
+const INTERNAL_PREFIX: &str = "internal";
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
