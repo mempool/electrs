@@ -729,7 +729,7 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
-        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), None, None) => {
+        (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
             let txs = query
                 .chain()
