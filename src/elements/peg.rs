@@ -52,6 +52,7 @@ impl PegoutValue {
 
 // Inner type for the indexer TxHistoryInfo::Pegin variant
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PeginInfo {
     pub txid: FullHash,
     pub vin: u16,
@@ -60,6 +61,7 @@ pub struct PeginInfo {
 
 // Inner type for the indexer TxHistoryInfo::Pegout variant
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PegoutInfo {
     pub txid: FullHash,
     pub vout: u16,

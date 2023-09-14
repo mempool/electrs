@@ -1,9 +1,9 @@
 extern crate electrs;
 
-use bincode::Options;
 use electrs::{
     config::Config,
     new_index::{Store, TxHistoryKey},
+    util::bincode_util,
 };
 
 fn main() {
@@ -23,10 +23,8 @@ fn main() {
             break;
         }
 
-        let entry: TxHistoryKey = bincode::options()
-            .with_big_endian()
-            .deserialize(key)
-            .expect("failed to deserialize TxHistoryKey");
+        let entry: TxHistoryKey =
+            bincode_util::deserialize_big(key).expect("failed to deserialize TxHistoryKey");
 
         if curr_scripthash != entry.hash {
             if total_entries > 100 {

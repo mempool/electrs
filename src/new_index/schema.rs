@@ -1,4 +1,3 @@
-use bincode::Options;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
 use bitcoin::util::merkleblock::MerkleBlock;
@@ -28,8 +27,8 @@ use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics};
 use crate::util::{
-    full_hash, has_prevout, is_spendable, BlockHeaderMeta, BlockId, BlockMeta, BlockStatus, Bytes,
-    HeaderEntry, HeaderList, ScriptToAddr,
+    bincode_util, full_hash, has_prevout, is_spendable, BlockHeaderMeta, BlockId, BlockMeta,
+    BlockStatus, Bytes, HeaderEntry, HeaderList, ScriptToAddr,
 };
 
 use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB};
@@ -369,7 +368,9 @@ impl ChainQuery {
             self.store
                 .txstore_db
                 .get(&BlockRow::txids_key(full_hash(&hash[..])))
-                .map(|val| bincode::deserialize(&val).expect("failed to parse block txids"))
+                .map(|val| {
+                    bincode_util::deserialize_little(&val).expect("failed to parse block txids")
+                })
         }
     }
 
@@ -384,7 +385,9 @@ impl ChainQuery {
             self.store
                 .txstore_db
                 .get(&BlockRow::txids_key(full_hash(&hash[..])))
-                .map(|val| bincode::deserialize(&val).expect("failed to parse block txids"))
+                .map(|val| {
+                    bincode_util::deserialize_little(&val).expect("failed to parse block txids")
+                })
         };
 
         txids.and_then(|txid_vec| {
@@ -411,7 +414,9 @@ impl ChainQuery {
             self.store
                 .txstore_db
                 .get(&BlockRow::meta_key(full_hash(&hash[..])))
-                .map(|val| bincode::deserialize(&val).expect("failed to parse BlockMeta"))
+                .map(|val| {
+                    bincode_util::deserialize_little(&val).expect("failed to parse BlockMeta")
+                })
         }
     }
 
@@ -551,7 +556,7 @@ impl ChainQuery {
             .store
             .cache_db
             .get(&UtxoCacheRow::key(scripthash))
-            .map(|c| bincode::deserialize(&c).unwrap())
+            .map(|c| bincode_util::deserialize_little(&c).unwrap())
             .and_then(|(utxos_cache, blockhash)| {
                 self.height_by_hash(&blockhash)
                     .map(|height| (utxos_cache, height))
@@ -656,7 +661,7 @@ impl ChainQuery {
             .store
             .cache_db
             .get(&StatsCacheRow::key(scripthash))
-            .map(|c| bincode::deserialize(&c).unwrap())
+            .map(|c| bincode_util::deserialize_little(&c).unwrap())
             .and_then(|(stats, blockhash)| {
                 self.height_by_hash(&blockhash)
                     .map(|height| (stats, height))
@@ -1228,7 +1233,7 @@ impl TxRow {
     fn into_row(self) -> DBRow {
         let TxRow { key, value } = self;
         DBRow {
-            key: bincode::serialize(&key).unwrap(),
+            key: bincode_util::serialize_little(&key).unwrap(),
             value,
         }
     }
@@ -1263,14 +1268,14 @@ impl TxConfRow {
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: vec![],
         }
     }
 
     fn from_row(row: DBRow) -> Self {
         TxConfRow {
-            key: bincode::deserialize(&row.key).expect("failed to parse TxConfKey"),
+            key: bincode_util::deserialize_little(&row.key).expect("failed to parse TxConfKey"),
         }
     }
 }
@@ -1299,7 +1304,7 @@ impl TxOutRow {
         }
     }
     fn key(outpoint: &OutPoint) -> Bytes {
-        bincode::serialize(&TxOutKey {
+        bincode_util::serialize_little(&TxOutKey {
             code: b'O',
             txid: full_hash(&outpoint.txid[..]),
             vout: outpoint.vout as u16,
@@ -1309,7 +1314,7 @@ impl TxOutRow {
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
         }
     }
@@ -1340,14 +1345,14 @@ impl BlockRow {
     fn new_txids(hash: FullHash, txids: &[Txid]) -> BlockRow {
         BlockRow {
             key: BlockKey { code: b'X', hash },
-            value: bincode::serialize(txids).unwrap(),
+            value: bincode_util::serialize_little(txids).unwrap(),
         }
     }
 
     fn new_meta(hash: FullHash, meta: &BlockMeta) -> BlockRow {
         BlockRow {
             key: BlockKey { code: b'M', hash },
-            value: bincode::serialize(meta).unwrap(),
+            value: bincode_util::serialize_little(meta).unwrap(),
         }
     }
 
@@ -1376,20 +1381,21 @@ impl BlockRow {
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
         }
     }
 
     fn from_row(row: DBRow) -> Self {
         BlockRow {
-            key: bincode::deserialize(&row.key).unwrap(),
+            key: bincode_util::deserialize_little(&row.key).unwrap(),
             value: row.value,
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FundingInfo {
     pub txid: FullHash,
     pub vout: u16,
@@ -1397,6 +1403,7 @@ pub struct FundingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SpendingInfo {
     pub txid: FullHash, // spending transaction
     pub vin: u16,
@@ -1406,6 +1413,7 @@ pub struct SpendingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TxHistoryInfo {
     Funding(FundingInfo),
     Spending(SpendingInfo),
@@ -1437,6 +1445,7 @@ impl TxHistoryInfo {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
@@ -1464,34 +1473,23 @@ impl TxHistoryRow {
     }
 
     fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
-        bincode::serialize(&(code, full_hash(hash), std::u32::MAX)).unwrap()
+        bincode_util::serialize_big(&(code, full_hash(hash), std::u32::MAX)).unwrap()
     }
 
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
-        bincode::options()
-            .with_big_endian()
-            .with_fixint_encoding()
-            .serialize(&(code, full_hash(hash), height))
-            .unwrap()
+        bincode_util::serialize_big(&(code, full_hash(hash), height)).unwrap()
     }
 
     pub fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::options()
-                .with_big_endian()
-                .with_fixint_encoding()
-                .serialize(&self.key)
-                .unwrap(),
+            key: bincode_util::serialize_big(&self.key).unwrap(),
             value: vec![],
         }
     }
 
     pub fn from_row(row: DBRow) -> Self {
-        let key = bincode::options()
-            .with_big_endian()
-            .with_fixint_encoding()
-            .deserialize(&row.key)
-            .expect("failed to deserialize TxHistoryKey");
+        let key =
+            bincode_util::deserialize_big(&row.key).expect("failed to deserialize TxHistoryKey");
         TxHistoryRow { key }
     }
 
@@ -1557,19 +1555,21 @@ impl TxEdgeRow {
 
     fn filter(outpoint: &OutPoint) -> Bytes {
         // TODO build key without using bincode? [ b"S", &outpoint.txid[..], outpoint.vout?? ].concat()
-        bincode::serialize(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout as u16)).unwrap()
+        bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout as u16))
+            .unwrap()
     }
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: vec![],
         }
     }
 
     fn from_row(row: DBRow) -> Self {
         TxEdgeRow {
-            key: bincode::deserialize(&row.key).expect("failed to deserialize TxEdgeKey"),
+            key: bincode_util::deserialize_little(&row.key)
+                .expect("failed to deserialize TxEdgeKey"),
         }
     }
 }
@@ -1592,7 +1592,7 @@ impl StatsCacheRow {
                 code: b'A',
                 scripthash: full_hash(scripthash),
             },
-            value: bincode::serialize(&(stats, blockhash)).unwrap(),
+            value: bincode_util::serialize_little(&(stats, blockhash)).unwrap(),
         }
     }
 
@@ -1602,7 +1602,7 @@ impl StatsCacheRow {
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
         }
     }
@@ -1624,7 +1624,7 @@ impl UtxoCacheRow {
                 code: b'U',
                 scripthash: full_hash(scripthash),
             },
-            value: bincode::serialize(&(utxos_cache, blockhash)).unwrap(),
+            value: bincode_util::serialize_little(&(utxos_cache, blockhash)).unwrap(),
         }
     }
 
@@ -1634,7 +1634,7 @@ impl UtxoCacheRow {
 
     fn into_row(self) -> DBRow {
         DBRow {
-            key: bincode::serialize(&self.key).unwrap(),
+            key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
         }
     }
@@ -1665,4 +1665,163 @@ fn from_utxo_cache(utxos_cache: CachedUtxoMap, chain: &ChainQuery) -> UtxoMap {
             (outpoint, (blockid, value))
         })
         .collect()
+}
+
+#[cfg(all(test, feature = "liquid"))]
+mod tests {
+    use super::{DBRow, TxHistoryRow};
+    use crate::chain::Value;
+    use std::convert::TryInto;
+
+    #[test]
+    fn tx_history_row_ser_deser_tests() {
+        #[rustfmt::skip]
+        let inputs = [
+            vec![
+                // code
+                72,
+                // hash
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                // confirmed_height
+                0, 0, 0, 2,
+                // TxHistoryInfo variant (Funding)
+                0, 0, 0, 0,
+                // FundingInfo
+                // txid
+                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                // vout
+                0, 3,
+                // Value variant (Explicit)
+                0, 0, 0, 0, 0, 0, 0, 2,
+                // number of tuple elements
+                1,
+                // Inner value (u64)
+                7, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 0,
+                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                0, 3,
+                // Value variant (Null)
+                0, 0, 0, 0, 0, 0, 0, 1,
+                // number of tuple elements
+                0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 1,
+                18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                    18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                0, 12,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                    98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                0, 9,
+                0, 0, 0, 0, 0, 0, 0, 2,
+                1,
+                14, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            vec![
+                72,
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                0, 0, 0, 2,
+                0, 0, 0, 1,
+                18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                    18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
+                0, 12,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                    98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                0, 9,
+                0, 0, 0, 0, 0, 0, 0, 1,
+                0,
+            ],
+        ];
+        let expected = [
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
+                        txid: [2; 32],
+                        vout: 3,
+                        value: Value::Explicit(7),
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
+                        txid: [2; 32],
+                        vout: 3,
+                        value: Value::Null,
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
+                        txid: [18; 32],
+                        vin: 12,
+                        prev_txid: "beef".repeat(8).as_bytes().try_into().unwrap(),
+                        prev_vout: 9,
+                        value: Value::Explicit(14),
+                    }),
+                },
+            },
+            super::TxHistoryRow {
+                key: super::TxHistoryKey {
+                    code: b'H',
+                    hash: [1; 32],
+                    confirmed_height: 2,
+                    txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
+                        txid: [18; 32],
+                        vin: 12,
+                        prev_txid: "beef".repeat(8).as_bytes().try_into().unwrap(),
+                        prev_vout: 9,
+                        value: Value::Null,
+                    }),
+                },
+            },
+        ];
+        for (expected_row, input) in
+            IntoIterator::into_iter(expected).zip(IntoIterator::into_iter(inputs))
+        {
+            let input_row = DBRow {
+                key: input,
+                value: vec![],
+            };
+            assert_eq!(TxHistoryRow::from_row(input_row).key, expected_row.key);
+        }
+
+        #[rustfmt::skip]
+        assert_eq!(
+            TxHistoryRow::prefix_height(b'H', "beef".repeat(8).as_bytes(), 1337),
+            vec![
+                // code
+                72,
+                // hash
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
+                // height
+                0, 0, 5, 57
+            ]
+        );
+    }
 }
