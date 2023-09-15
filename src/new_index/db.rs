@@ -3,7 +3,7 @@ use rocksdb;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::util::Bytes;
+use crate::util::{bincode_util, Bytes};
 
 static DB_VERSION: u32 = 1;
 
@@ -194,7 +194,7 @@ impl DB {
     }
 
     fn verify_compatibility(&self, config: &Config) {
-        let mut compatibility_bytes = bincode::serialize(&DB_VERSION).unwrap();
+        let mut compatibility_bytes = bincode_util::serialize_little(&DB_VERSION).unwrap();
 
         if config.light_mode {
             // append a byte to indicate light_mode is enabled.
