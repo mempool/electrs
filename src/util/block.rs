@@ -146,7 +146,7 @@ impl HeaderList {
                 + 1
         };
         (new_height..)
-            .zip(hashed_headers.into_iter())
+            .zip(hashed_headers)
             .map(|(height, hashed_header)| HeaderEntry {
                 height,
                 hash: hashed_header.blockhash,
