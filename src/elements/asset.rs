@@ -13,7 +13,7 @@ use crate::elements::registry::{AssetMeta, AssetRegistry};
 use crate::errors::*;
 use crate::new_index::schema::{TxHistoryInfo, TxHistoryKey, TxHistoryRow};
 use crate::new_index::{db::DBFlush, ChainQuery, DBRow, Mempool, Query};
-use crate::util::{full_hash, Bytes, FullHash, TransactionStatus, TxInput};
+use crate::util::{bincode_util, full_hash, Bytes, FullHash, TransactionStatus, TxInput};
 
 lazy_static! {
     pub static ref NATIVE_ASSET_ID: AssetId =
@@ -152,6 +152,7 @@ impl LiquidAsset {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IssuingInfo {
     pub txid: FullHash,
     pub vin: u16,
@@ -162,6 +163,7 @@ pub struct IssuingInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct BurningInfo {
     pub txid: FullHash,
     pub vout: u16,
@@ -189,7 +191,7 @@ pub fn index_confirmed_tx_assets(
     // reissuances are only kept under the history index.
     rows.extend(issuances.into_iter().map(|(asset_id, asset_row)| DBRow {
         key: [b"i", &asset_id.into_inner()[..]].concat(),
-        value: bincode::serialize(&asset_row).unwrap(),
+        value: bincode_util::serialize_little(&asset_row).unwrap(),
     }));
 }
 
@@ -372,7 +374,9 @@ pub fn lookup_asset(
 
     let chain_row = history_db
         .get(&[b"i", &asset_id.into_inner()[..]].concat())
-        .map(|row| bincode::deserialize::<AssetRow>(&row).expect("failed parsing AssetRow"));
+        .map(|row| {
+            bincode_util::deserialize_little::<AssetRow>(&row).expect("failed parsing AssetRow")
+        });
 
     let row = chain_row
         .as_ref()
@@ -454,7 +458,7 @@ where
 {
     DBRow {
         key: asset_cache_key(asset_id),
-        value: bincode::serialize(&(stats, blockhash)).unwrap(),
+        value: bincode_util::serialize_little(&(stats, blockhash)).unwrap(),
     }
 }
 
@@ -497,7 +501,7 @@ where
         .store()
         .cache_db()
         .get(&asset_cache_key(asset_id))
-        .map(|c| bincode::deserialize(&c).unwrap())
+        .map(|c| bincode_util::deserialize_little(&c).unwrap())
         .and_then(|(stats, blockhash)| {
             chain
                 .height_by_hash(&blockhash)
