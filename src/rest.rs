@@ -1126,6 +1126,38 @@ fn handle_request(
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
         }
+        (&Method::GET, Some(&"txs"), Some(&"outspends"), None, None, None) => {
+            let txid_strings: Vec<&str> = query_params
+                .get("txids")
+                .ok_or(HttpError::from("No txids specified".to_string()))?
+                .as_str()
+                .split(',')
+                .collect();
+
+            if txid_strings.len() > 50 {
+                return http_message(StatusCode::BAD_REQUEST, "Too many txids requested", 0);
+            }
+
+            let spends: Vec<Vec<SpendingValue>> = txid_strings
+                .into_iter()
+                .map(|txid_str| {
+                    Txid::from_hex(txid_str)
+                        .ok()
+                        .and_then(|txid| query.lookup_txn(&txid))
+                        .map_or_else(Vec::new, |tx| {
+                            query
+                                .lookup_tx_spends(tx)
+                                .into_iter()
+                                .map(|spend| {
+                                    spend.map_or_else(SpendingValue::default, SpendingValue::from)
+                                })
+                                .collect()
+                        })
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
 
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
