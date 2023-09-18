@@ -20,6 +20,7 @@ do
 		--network testnet \
 		--http-socket-file "${HOME}/socket/esplora-bitcoin-testnet" \
 		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--precache-threads 100 \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \
 		--cookie "${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASS}" \

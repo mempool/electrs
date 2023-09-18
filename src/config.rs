@@ -48,6 +48,7 @@ pub struct Config {
     pub index_unspendables: bool,
     pub cors: Option<String>,
     pub precache_scripts: Option<String>,
+    pub precache_threads: usize,
     pub utxos_limit: usize,
     pub electrum_txs_limit: usize,
     pub electrum_banner: String,
@@ -185,6 +186,12 @@ impl Config {
                 Arg::with_name("precache_scripts")
                     .long("precache-scripts")
                     .help("Path to file with list of scripts to pre-cache")
+                    .takes_value(true)
+            )
+            .arg(
+                Arg::with_name("precache_threads")
+                    .long("precache-threads")
+                    .help("Non-zero number of threads to use for precache threadpool. [default: 4 * CORE_COUNT]")
                     .takes_value(true)
             )
             .arg(
@@ -472,6 +479,22 @@ impl Config {
             index_unspendables: m.is_present("index_unspendables"),
             cors: m.value_of("cors").map(|s| s.to_string()),
             precache_scripts: m.value_of("precache_scripts").map(|s| s.to_string()),
+            precache_threads: m.value_of("precache_threads").map_or_else(
+                || {
+                    std::thread::available_parallelism()
+                        .expect("Can't get core count")
+                        .get()
+                        * 4
+                },
+                |s| match s.parse::<usize>() {
+                    Ok(v) if v > 0 => v,
+                    _ => clap::Error::value_validation_auto(format!(
+                        "The argument '{}' isn't a valid value",
+                        s
+                    ))
+                    .exit(),
+                },
+            ),
 
             #[cfg(feature = "liquid")]
             parent_network,

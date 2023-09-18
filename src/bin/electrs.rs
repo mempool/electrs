@@ -69,12 +69,6 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         &metrics,
     ));
 
-    if let Some(ref precache_file) = config.precache_scripts {
-        let precache_scripthashes = precache::scripthashes_from_file(precache_file.to_string())
-            .expect("cannot load scripts to precache");
-        precache::precache(&chain, precache_scripthashes);
-    }
-
     let mempool = Arc::new(RwLock::new(Mempool::new(
         Arc::clone(&chain),
         &metrics,
@@ -101,6 +95,16 @@ fn run_server(config: Arc<Config>) -> Result<()> {
     // TODO: configuration for which servers to start
     let rest_server = rest::start(Arc::clone(&config), Arc::clone(&query));
     let electrum_server = ElectrumRPC::start(Arc::clone(&config), Arc::clone(&query), &metrics);
+
+    if let Some(ref precache_file) = config.precache_scripts {
+        let precache_scripthashes = precache::scripthashes_from_file(precache_file.to_string())
+            .expect("cannot load scripts to precache");
+        precache::precache(
+            Arc::clone(&chain),
+            precache_scripthashes,
+            config.precache_threads,
+        );
+    }
 
     loop {
         if let Err(err) = signal.wait(Duration::from_millis(500), true) {

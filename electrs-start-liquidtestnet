@@ -21,6 +21,7 @@ do
 		--network liquidtestnet \
 		--http-socket-file "${HOME}/socket/esplora-liquid-testnet" \
 		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--precache-threads 100 \
 		--asset-db-path "${HOME}/asset_registry_testnet_db" \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \

@@ -20,6 +20,7 @@ do
 		--network signet \
 		--http-socket-file "${HOME}/socket/esplora-bitcoin-signet" \
 		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--precache-threads 100 \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \
 		--cookie "${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASS}" \
