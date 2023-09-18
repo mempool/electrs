@@ -11,7 +11,7 @@ pub use self::fees::get_tx_fee;
 pub use self::script::{get_innerscripts, ScriptToAddr, ScriptToAsm};
 pub use self::transaction::{
     extract_tx_prevouts, has_prevout, is_coinbase, is_spendable, serialize_outpoint,
-    TransactionStatus, TxInput,
+    sigops::transaction_sigop_count, TransactionStatus, TxInput,
 };
 
 use std::collections::HashMap;

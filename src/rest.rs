@@ -4,8 +4,8 @@ use crate::errors;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
-    has_prevout, is_coinbase, BlockHeaderMeta, BlockId, FullHash, ScriptToAddr, ScriptToAsm,
-    TransactionStatus,
+    has_prevout, is_coinbase, transaction_sigop_count, BlockHeaderMeta, BlockId, FullHash,
+    ScriptToAddr, ScriptToAsm, TransactionStatus,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -144,6 +144,7 @@ struct TransactionValue {
     vout: Vec<TxOutValue>,
     size: u32,
     weight: u32,
+    sigops: u32,
     fee: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<TransactionStatus>,
@@ -157,6 +158,8 @@ impl TransactionValue {
         config: &Config,
     ) -> Result<Self, errors::Error> {
         let prevouts = extract_tx_prevouts(&tx, txos)?;
+        let sigops = transaction_sigop_count(&tx, &prevouts)
+            .map_err(|_| errors::Error::from("Couldn't count sigops"))? as u32;
 
         let vins: Vec<TxInValue> = tx
             .input
@@ -183,6 +186,7 @@ impl TransactionValue {
             vout: vouts,
             size: tx.size() as u32,
             weight: tx.weight() as u32,
+            sigops,
             fee,
             status: Some(TransactionStatus::from(blockid)),
         })
