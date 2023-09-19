@@ -13,12 +13,34 @@ BITCOIN_RPC_PASS=$(grep 'rpcpassword=' ${HOME}/bitcoin.conf|cut -d = -f2|head -1
 until false
 do
 	cd "${HOME}/electrs"
+
+	# MAINNET ONLY Run the popular address txt file generator before each run
+	PS_FOLDER=/tmp/electrs-popular-scripts
+	rm -rf "${PS_FOLDER}"
+	mkdir -p "${PS_FOLDER}"
+	## Use 128 threads to generate the txt file (lots of iowait, so 2x~4x core count is ok)
+	## Only pick up addresses with 101 history events or more
+	## (Without lowering MIN_HISTORY_ITEMS_TO_CACHE this is the lowest we can go)
+	## It prints out progress to STDERR
+	HIGH_USAGE_THRESHOLD=101 \
+	JOB_THREAD_COUNT=128 \
+	cargo run \
+		--release \
+		--bin popular-scripts \
+		-- \
+		--db-dir "/electrs" \
+		> "${PS_FOLDER}/popular-scripts.txt"
+	## Sorted and deduplicated just in case
+	sort "${PS_FOLDER}/popular-scripts.txt" | uniq > "${PS_FOLDER}/tmp.txt"
+	mv "${PS_FOLDER}/tmp.txt" "${PS_FOLDER}/popular-scripts.txt"
+
+	# Run the electrs process (Note: db-dir is used in both commands)
 	cargo run \
 		--release \
 		--bin electrs \
 		-- \
 		--http-socket-file "${HOME}/socket/esplora-bitcoin-mainnet" \
-		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
+		--precache-scripts "${PS_FOLDER}/popular-scripts.txt" \
 		--precache-threads 100 \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \
