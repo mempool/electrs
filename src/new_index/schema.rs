@@ -145,6 +145,29 @@ pub struct ScriptStats {
     pub spent_txo_sum: u64,
 }
 
+impl ScriptStats {
+    #[cfg(feature = "liquid")]
+    fn is_sane(&self) -> bool {
+        // See below for comments.
+        self.spent_txo_count <= self.funded_txo_count
+            && self.tx_count <= self.spent_txo_count + self.funded_txo_count
+    }
+    #[cfg(not(feature = "liquid"))]
+    fn is_sane(&self) -> bool {
+        // There are less or equal spends to funds
+        self.spent_txo_count <= self.funded_txo_count
+        // There are less or equal transactions to total spent+funded txo counts
+        // (Most spread out txo case = N funds in 1 tx each + M spends in 1 tx each = N + M txes)
+        && self.tx_count <= self.spent_txo_count + self.funded_txo_count
+        // There are less or equal spent coins to funded coins
+        && self.spent_txo_sum <= self.funded_txo_sum
+        // If funded and spent txos are equal (0 balance)
+        // Then funded and spent coins must be equal (0 balance)
+        && (self.funded_txo_count == self.spent_txo_count)
+            == (self.funded_txo_sum == self.spent_txo_sum)
+    }
+}
+
 pub struct Indexer {
     store: Arc<Store>,
     flush: DBFlush,
@@ -620,6 +643,9 @@ impl ChainQuery {
             .map(TxHistoryRow::from_row)
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
+                    // drop history entries that were previously confirmed in a re-orged block and later
+                    // confirmed again at a different height
+                    .filter(|blockid| blockid.height == history.key.confirmed_height as usize)
                     .map(|b| (history, b))
             });
 
@@ -656,12 +682,14 @@ impl ChainQuery {
         let _timer = self.start_timer("stats");
 
         // get the last known stats and the blockhash they are updated for.
-        // invalidates the cache if the block was orphaned.
+        // invalidates the cache if the block was orphaned or if values are out of sync.
         let cache: Option<(ScriptStats, usize)> = self
             .store
             .cache_db
             .get(&StatsCacheRow::key(scripthash))
-            .map(|c| bincode_util::deserialize_little(&c).unwrap())
+            .map(|c| bincode_util::deserialize_little::<(ScriptStats, BlockHash)>(&c).unwrap())
+            // Check that the values are sane (No negative balances or balances with 0 utxos)
+            .filter(|(stats, _)| stats.is_sane())
             .and_then(|(stats, blockhash)| {
                 self.height_by_hash(&blockhash)
                     .map(|height| (stats, height))
@@ -696,9 +724,11 @@ impl ChainQuery {
         let history_iter = self
             .history_iter_scan(b'H', scripthash, start_height)
             .map(TxHistoryRow::from_row)
-            .unique_by(|th| (th.get_txid(), th.get_funded_outpoint()))
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
+                    // drop history entries that were previously confirmed in a re-orged block and later
+                    // confirmed again at a different height
+                    .filter(|blockid| blockid.height == history.key.confirmed_height as usize)
                     .map(|blockid| (history, blockid))
             });
 
