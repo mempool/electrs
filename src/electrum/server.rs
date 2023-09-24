@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::mpsc::{Sender, SyncSender, TrySendError};
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -101,6 +102,7 @@ struct Connection {
     chan: SyncChannel<Message>,
     stats: Arc<Stats>,
     txs_limit: usize,
+    die_please: Option<Receiver<()>>,
     #[cfg(feature = "electrum-discovery")]
     discovery: Option<Arc<DiscoveryManager>>,
 }
@@ -112,6 +114,7 @@ impl Connection {
         addr: SocketAddr,
         stats: Arc<Stats>,
         txs_limit: usize,
+        die_please: Receiver<()>,
         #[cfg(feature = "electrum-discovery")] discovery: Option<Arc<DiscoveryManager>>,
     ) -> Connection {
         Connection {
@@ -123,6 +126,7 @@ impl Connection {
             chan: SyncChannel::new(10),
             stats,
             txs_limit,
+            die_please: Some(die_please),
             #[cfg(feature = "electrum-discovery")]
             discovery,
         }
@@ -501,38 +505,46 @@ impl Connection {
         Ok(())
     }
 
-    fn handle_replies(&mut self) -> Result<()> {
+    fn handle_replies(&mut self, shutdown: crossbeam_channel::Receiver<()>) -> Result<()> {
         let empty_params = json!([]);
         loop {
-            let msg = self.chan.receiver().recv().chain_err(|| "channel closed")?;
-            trace!("RPC {:?}", msg);
-            match msg {
-                Message::Request(line) => {
-                    let cmd: Value = from_str(&line).chain_err(|| "invalid JSON format")?;
-                    let reply = match (
-                        cmd.get("method"),
-                        cmd.get("params").unwrap_or(&empty_params),
-                        cmd.get("id"),
-                    ) {
-                        (Some(Value::String(method)), Value::Array(params), Some(id)) => {
-                            self.handle_command(method, params, id)?
+            crossbeam_channel::select! {
+                recv(self.chan.receiver()) -> msg => {
+                    let msg = msg.chain_err(|| "channel closed")?;
+                    trace!("RPC {:?}", msg);
+                    match msg {
+                        Message::Request(line) => {
+                            let cmd: Value = from_str(&line).chain_err(|| "invalid JSON format")?;
+                            let reply = match (
+                                cmd.get("method"),
+                                cmd.get("params").unwrap_or(&empty_params),
+                                cmd.get("id"),
+                            ) {
+                                (Some(Value::String(method)), Value::Array(params), Some(id)) => {
+                                    self.handle_command(method, params, id)?
+                                }
+                                _ => bail!("invalid command: {}", cmd),
+                            };
+                            self.send_values(&[reply])?
                         }
-                        _ => bail!("invalid command: {}", cmd),
-                    };
-                    self.send_values(&[reply])?
+                        Message::PeriodicUpdate => {
+                            let values = self
+                                .update_subscriptions()
+                                .chain_err(|| "failed to update subscriptions")?;
+                            self.send_values(&values)?
+                        }
+                        Message::Done => return Ok(()),
+                    }
                 }
-                Message::PeriodicUpdate => {
-                    let values = self
-                        .update_subscriptions()
-                        .chain_err(|| "failed to update subscriptions")?;
-                    self.send_values(&values)?
-                }
-                Message::Done => return Ok(()),
+                recv(shutdown) -> _ => return Ok(()),
             }
         }
     }
 
-    fn handle_requests(mut reader: BufReader<TcpStream>, tx: SyncSender<Message>) -> Result<()> {
+    fn handle_requests(
+        mut reader: BufReader<TcpStream>,
+        tx: crossbeam_channel::Sender<Message>,
+    ) -> Result<()> {
         loop {
             let mut line = Vec::<u8>::new();
             reader
@@ -564,8 +576,18 @@ impl Connection {
         self.stats.clients.inc();
         let reader = BufReader::new(self.stream.try_clone().expect("failed to clone TcpStream"));
         let tx = self.chan.sender();
+
+        let stream = self.stream.try_clone().expect("failed to clone TcpStream");
+        let die_please = self.die_please.take().unwrap();
+        let (reply_killer, reply_receiver) = crossbeam_channel::unbounded();
+        spawn_thread("properly-die", move || {
+            let _ = die_please.recv();
+            let _ = stream.shutdown(Shutdown::Both);
+            let _ = reply_killer.send(());
+        });
+
         let child = spawn_thread("reader", || Connection::handle_requests(reader, tx));
-        if let Err(e) = self.handle_replies() {
+        if let Err(e) = self.handle_replies(reply_receiver) {
             error!(
                 "[{}] connection handling failed: {}",
                 self.addr,
@@ -631,8 +653,9 @@ struct Stats {
 impl RPC {
     fn start_notifier(
         notification: Channel<Notification>,
-        senders: Arc<Mutex<Vec<SyncSender<Message>>>>,
+        senders: Arc<Mutex<Vec<crossbeam_channel::Sender<Message>>>>,
         acceptor: Sender<Option<(TcpStream, SocketAddr)>>,
+        acceptor_shutdown: Sender<()>,
     ) {
         spawn_thread("notification", move || {
             for msg in notification.receiver().iter() {
@@ -640,7 +663,7 @@ impl RPC {
                 match msg {
                     Notification::Periodic => {
                         for sender in senders.split_off(0) {
-                            if let Err(TrySendError::Disconnected(_)) =
+                            if let Err(crossbeam_channel::TrySendError::Disconnected(_)) =
                                 sender.try_send(Message::PeriodicUpdate)
                             {
                                 continue;
@@ -648,13 +671,20 @@ impl RPC {
                             senders.push(sender);
                         }
                     }
-                    Notification::Exit => acceptor.send(None).unwrap(), // mark acceptor as done
+                    Notification::Exit => {
+                        acceptor_shutdown.send(()).unwrap(); // Stop the acceptor itself
+                        acceptor.send(None).unwrap(); // mark acceptor as done
+                        break;
+                    }
                 }
             }
         });
     }
 
-    fn start_acceptor(addr: SocketAddr) -> Channel<Option<(TcpStream, SocketAddr)>> {
+    fn start_acceptor(
+        addr: SocketAddr,
+        shutdown_channel: Channel<()>,
+    ) -> Channel<Option<(TcpStream, SocketAddr)>> {
         let chan = Channel::unbounded();
         let acceptor = chan.sender();
         spawn_thread("acceptor", move || {
@@ -664,10 +694,29 @@ impl RPC {
                 .set_nonblocking(false)
                 .expect("cannot set nonblocking to false");
             let listener = TcpListener::from(socket);
+            let local_addr = listener.local_addr().unwrap();
+            let shutdown_bool = Arc::new(AtomicBool::new(false));
+
+            {
+                let shutdown_bool = Arc::clone(&shutdown_bool);
+                crate::util::spawn_thread("shutdown-acceptor", move || {
+                    // Block until shutdown is sent.
+                    let _ = shutdown_channel.receiver().recv();
+                    // Store the bool so after the next accept it will break the loop
+                    shutdown_bool.store(true, std::sync::atomic::Ordering::Release);
+                    // Connect to the socket to cause it to unblock
+                    let _ = TcpStream::connect(local_addr);
+                });
+            }
 
             info!("Electrum RPC server running on {}", addr);
             loop {
                 let (stream, addr) = listener.accept().expect("accept failed");
+
+                if shutdown_bool.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
+
                 stream
                     .set_nonblocking(false)
                     .expect("failed to set connection as blocking");
@@ -724,10 +773,19 @@ impl RPC {
         RPC {
             notification: notification.sender(),
             server: Some(spawn_thread("rpc", move || {
-                let senders = Arc::new(Mutex::new(Vec::<SyncSender<Message>>::new()));
+                let senders =
+                    Arc::new(Mutex::new(Vec::<crossbeam_channel::Sender<Message>>::new()));
+                let killers = Arc::new(Mutex::new(Vec::<Sender<()>>::new()));
 
-                let acceptor = RPC::start_acceptor(rpc_addr);
-                RPC::start_notifier(notification, senders.clone(), acceptor.sender());
+                let acceptor_shutdown = Channel::unbounded();
+                let acceptor_shutdown_sender = acceptor_shutdown.sender();
+                let acceptor = RPC::start_acceptor(rpc_addr, acceptor_shutdown);
+                RPC::start_notifier(
+                    notification,
+                    senders.clone(),
+                    acceptor.sender(),
+                    acceptor_shutdown_sender,
+                );
 
                 let mut threads = HashMap::new();
                 let (garbage_sender, garbage_receiver) = crossbeam_channel::unbounded();
@@ -738,6 +796,11 @@ impl RPC {
                     let senders = Arc::clone(&senders);
                     let stats = Arc::clone(&stats);
                     let garbage_sender = garbage_sender.clone();
+
+                    // Kill the peers properly
+                    let (killer, peace_receiver) = std::sync::mpsc::channel();
+                    killers.lock().unwrap().push(killer);
+
                     #[cfg(feature = "electrum-discovery")]
                     let discovery = discovery.clone();
 
@@ -749,6 +812,7 @@ impl RPC {
                             addr,
                             stats,
                             txs_limit,
+                            peace_receiver,
                             #[cfg(feature = "electrum-discovery")]
                             discovery,
                         );
@@ -769,10 +833,16 @@ impl RPC {
                         }
                     }
                 }
+                // Drop these
+                drop(acceptor);
+                drop(garbage_receiver);
 
                 trace!("closing {} RPC connections", senders.lock().unwrap().len());
+                for killer in killers.lock().unwrap().iter() {
+                    let _ = killer.send(());
+                }
                 for sender in senders.lock().unwrap().iter() {
-                    let _ = sender.send(Message::Done);
+                    let _ = sender.try_send(Message::Done);
                 }
 
                 for (id, thread) in threads {
@@ -800,5 +870,8 @@ impl Drop for RPC {
             handle.join().unwrap();
         }
         trace!("RPC server is stopped");
+        crate::util::with_spawned_threads(|threads| {
+            trace!("Threads after dropping RPC: {:?}", threads);
+        });
     }
 }
