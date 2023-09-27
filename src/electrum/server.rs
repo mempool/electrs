@@ -775,7 +775,6 @@ impl RPC {
             server: Some(spawn_thread("rpc", move || {
                 let senders =
                     Arc::new(Mutex::new(Vec::<crossbeam_channel::Sender<Message>>::new()));
-                let killers = Arc::new(Mutex::new(Vec::<Sender<()>>::new()));
 
                 let acceptor_shutdown = Channel::unbounded();
                 let acceptor_shutdown_sender = acceptor_shutdown.sender();
@@ -799,7 +798,6 @@ impl RPC {
 
                     // Kill the peers properly
                     let (killer, peace_receiver) = std::sync::mpsc::channel();
-                    killers.lock().unwrap().push(killer);
 
                     #[cfg(feature = "electrum-discovery")]
                     let discovery = discovery.clone();
@@ -823,10 +821,11 @@ impl RPC {
                     });
 
                     trace!("[{}] spawned {:?}", addr, spawned.thread().id());
-                    threads.insert(spawned.thread().id(), spawned);
+                    threads.insert(spawned.thread().id(), (spawned, killer));
                     while let Ok(id) = garbage_receiver.try_recv() {
-                        if let Some(thread) = threads.remove(&id) {
+                        if let Some((thread, killer)) = threads.remove(&id) {
                             trace!("[{}] joining {:?}", addr, id);
+                            let _ = killer.send(());
                             if let Err(error) = thread.join() {
                                 error!("failed to join {:?}: {:?}", id, error);
                             }
@@ -838,15 +837,13 @@ impl RPC {
                 drop(garbage_receiver);
 
                 trace!("closing {} RPC connections", senders.lock().unwrap().len());
-                for killer in killers.lock().unwrap().iter() {
-                    let _ = killer.send(());
-                }
                 for sender in senders.lock().unwrap().iter() {
                     let _ = sender.try_send(Message::Done);
                 }
 
-                for (id, thread) in threads {
+                for (id, (thread, killer)) in threads {
                     trace!("joining {:?}", id);
+                    let _ = killer.send(());
                     if let Err(error) = thread.join() {
                         error!("failed to join {:?}: {:?}", id, error);
                     }
