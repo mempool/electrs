@@ -31,6 +31,7 @@ do
 		-- \
 		--network signet \
 		--http-socket-file "${HOME}/socket/esplora-bitcoin-signet" \
+		--rpc-socket-file "${HOME}/socket/electrum-bitcoin-signet" \
 		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \

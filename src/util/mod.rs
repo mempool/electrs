@@ -38,26 +38,38 @@ pub fn full_hash(hash: &[u8]) -> FullHash {
 }
 
 pub struct SyncChannel<T> {
-    tx: crossbeam_channel::Sender<T>,
-    rx: crossbeam_channel::Receiver<T>,
+    tx: Option<crossbeam_channel::Sender<T>>,
+    rx: Option<crossbeam_channel::Receiver<T>>,
 }
 
 impl<T> SyncChannel<T> {
     pub fn new(size: usize) -> SyncChannel<T> {
         let (tx, rx) = crossbeam_channel::bounded(size);
-        SyncChannel { tx, rx }
+        SyncChannel {
+            tx: Some(tx),
+            rx: Some(rx),
+        }
     }
 
     pub fn sender(&self) -> crossbeam_channel::Sender<T> {
-        self.tx.clone()
+        self.tx.as_ref().expect("No Sender").clone()
     }
 
     pub fn receiver(&self) -> &crossbeam_channel::Receiver<T> {
-        &self.rx
+        self.rx.as_ref().expect("No Receiver")
     }
 
     pub fn into_receiver(self) -> crossbeam_channel::Receiver<T> {
-        self.rx
+        self.rx.expect("No Receiver")
+    }
+
+    /// This drops the sender and receiver, causing all other methods to panic.
+    ///
+    /// Use only when you know that the channel will no longer be used.
+    /// ie. shutdown.
+    pub fn close(&mut self) -> Option<crossbeam_channel::Receiver<T>> {
+        self.tx.take();
+        self.rx.take()
     }
 }
 
