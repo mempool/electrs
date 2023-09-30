@@ -533,10 +533,16 @@ impl Connection {
                                 .chain_err(|| "failed to update subscriptions")?;
                             self.send_values(&values)?
                         }
-                        Message::Done => return Ok(()),
+                        Message::Done => {
+                            self.chan.close();
+                            return Ok(());
+                        }
                     }
                 }
-                recv(shutdown) -> _ => return Ok(()),
+                recv(shutdown) -> _ => {
+                    self.chan.close();
+                    return Ok(());
+                }
             }
         }
     }
@@ -577,12 +583,18 @@ impl Connection {
         let reader = BufReader::new(self.stream.try_clone().expect("failed to clone TcpStream"));
         let tx = self.chan.sender();
 
-        let stream = self.stream.try_clone().expect("failed to clone TcpStream");
         let die_please = self.die_please.take().unwrap();
         let (reply_killer, reply_receiver) = crossbeam_channel::unbounded();
+
+        // We create a clone of the stream and put it in an Arc
+        // This will drop at the end of the function.
+        let arc_stream = Arc::new(self.stream.try_clone().expect("failed to clone TcpStream"));
+        // We don't want to keep the stream alive until SIGINT
+        // It should drop (close) no matter what.
+        let maybe_stream = Arc::downgrade(&arc_stream);
         spawn_thread("properly-die", move || {
             let _ = die_please.recv();
-            let _ = stream.shutdown(Shutdown::Both);
+            let _ = maybe_stream.upgrade().map(|s| s.shutdown(Shutdown::Both));
             let _ = reply_killer.send(());
         });
 
@@ -600,6 +612,8 @@ impl Connection {
             .sub(self.status_hashes.len() as i64);
 
         debug!("[{}] shutting down connection", self.addr);
+        // Drop the Arc so that the stream properly closes.
+        drop(arc_stream);
         let _ = self.stream.shutdown(Shutdown::Both);
         if let Err(err) = child.join().expect("receiver panicked") {
             error!("[{}] receiver failed: {}", self.addr, err);
@@ -798,6 +812,7 @@ impl RPC {
 
                     // Kill the peers properly
                     let (killer, peace_receiver) = std::sync::mpsc::channel();
+                    let killer_clone = killer.clone();
 
                     #[cfg(feature = "electrum-discovery")]
                     let discovery = discovery.clone();
@@ -817,6 +832,7 @@ impl RPC {
                         senders.lock().unwrap().push(conn.chan.sender());
                         conn.run();
                         info!("[{}] disconnected peer", addr);
+                        let _ = killer_clone.send(());
                         let _ = garbage_sender.send(std::thread::current().id());
                     });
 
