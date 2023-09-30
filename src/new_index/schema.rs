@@ -671,7 +671,7 @@ impl ChainQuery {
 
             // abort if the utxo set size excedees the limit at any point in time
             if utxos.len() > limit {
-                bail!(ErrorKind::TooPopular)
+                bail!(ErrorKind::TooManyUtxos(limit))
             }
         }
 
