@@ -3,11 +3,23 @@
 #export PATH="${HOME}/.cargo/bin:${PATH}"
 
 # don't bother making electrs.core files
-ulimit -c
+ulimit -c 0
 
 # get credentials from bitcoin.conf directly
 BITCOIN_RPC_USER=$(grep 'rpcuser=' "${HOME}/bitcoin.conf"|cut -d = -f2|head -1)
 BITCOIN_RPC_PASS=$(grep 'rpcpassword=' "${HOME}/bitcoin.conf"|cut -d = -f2|head -1)
+
+# base limits
+UTXOS_LIMIT=500
+ELECTRUM_TXS_LIMIT=500
+
+# increase limits based on hostname
+NODENAME=$(hostname|cut -d . -f1)
+LOCATION=$(hostname|cut -d . -f2)
+if [ "${NODENAME}" = "node201" ];then
+	UTXOS_LIMIT=9000
+	ELECTRUM_TXS_LIMIT=9000
+fi
 
 # run in loop in case of crash
 until false
@@ -25,6 +37,8 @@ do
 		--cookie "${BITCOIN_RPC_USER}:${BITCOIN_RPC_PASS}" \
 		--cors '*' \
 		--address-search \
+		--utxos-limit "${UTXOS_LIMIT}" \
+		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \
 		-vvv
 	sleep 1
 done
