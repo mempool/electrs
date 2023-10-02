@@ -570,19 +570,34 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                     let uri = req.uri().clone();
                     let body = hyper::body::to_bytes(req.into_body()).await?;
 
-                    let mut resp = handle_request(method, uri, body, &query, &config)
-                        .unwrap_or_else(|err| {
-                            warn!("{:?}", err);
-                            Response::builder()
-                                .status(err.0)
-                                .header("Content-Type", "text/plain")
-                                .header("X-Powered-By", &**VERSION_STRING)
-                                .body(Body::from(err.1))
-                                .unwrap()
-                        });
-                    if let Some(ref origins) = config.cors {
+                    let cors = config
+                        .cors
+                        .as_ref()
+                        .map(|c| c.parse::<hyper::http::HeaderValue>().unwrap());
+
+                    let mut resp = tokio::task::spawn_blocking(move || {
+                        handle_request(method, uri, body, &query, &config)
+                    })
+                    .await
+                    .unwrap_or_else(|err| {
+                        warn!("JoinHandle error: {:?}", err);
+                        Err(HttpError(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            String::from("Internal Server Error: JoinHandle"),
+                        ))
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!("{:?}", err);
+                        Response::builder()
+                            .status(err.0)
+                            .header("Content-Type", "text/plain")
+                            .header("X-Powered-By", &**VERSION_STRING)
+                            .body(Body::from(err.1))
+                            .unwrap()
+                    });
+                    if let Some(origins) = cors {
                         resp.headers_mut()
-                            .insert("Access-Control-Allow-Origin", origins.parse().unwrap());
+                            .insert("Access-Control-Allow-Origin", origins);
                     }
                     Ok::<_, hyper::Error>(resp)
                 }
