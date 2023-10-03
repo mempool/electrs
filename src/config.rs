@@ -41,6 +41,7 @@ pub struct Config {
     pub electrum_rpc_addr: SocketAddr,
     pub http_addr: SocketAddr,
     pub http_socket_file: Option<PathBuf>,
+    pub rpc_socket_file: Option<PathBuf>,
     pub monitoring_addr: SocketAddr,
     pub jsonrpc_import: bool,
     pub light_mode: bool,
@@ -250,6 +251,14 @@ impl Config {
                     .takes_value(true),
             );
 
+        #[cfg(unix)]
+        let args = args.arg(
+                Arg::with_name("rpc_socket_file")
+                    .long("rpc-socket-file")
+                    .help("Electrum RPC 'unix socket file' to listen on (default disabled, enabling this ignores the electrum_rpc_addr arg)")
+                    .takes_value(true),
+            );
+
         #[cfg(feature = "liquid")]
         let args = args
             .arg(
@@ -391,6 +400,7 @@ impl Config {
         );
 
         let http_socket_file: Option<PathBuf> = m.value_of("http_socket_file").map(PathBuf::from);
+        let rpc_socket_file: Option<PathBuf> = m.value_of("rpc_socket_file").map(PathBuf::from);
         let monitoring_addr: SocketAddr = str_to_socketaddr(
             m.value_of("monitoring_addr")
                 .unwrap_or(&format!("127.0.0.1:{}", default_monitoring_port)),
@@ -459,6 +469,7 @@ impl Config {
             electrum_banner,
             http_addr,
             http_socket_file,
+            rpc_socket_file,
             monitoring_addr,
             mempool_backlog_stats_ttl: value_t_or_exit!(m, "mempool_backlog_stats_ttl", u64),
             mempool_recent_txs_size: value_t_or_exit!(m, "mempool_recent_txs_size", usize),

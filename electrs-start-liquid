@@ -20,6 +20,8 @@ do
 		-- \
 		--network liquid \
 		--http-socket-file "${HOME}/socket/esplora-liquid-mainnet" \
+		--rpc-socket-file "${HOME}/socket/electrum-liquid-mainnet" \
+		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
 		--asset-db-path "${HOME}/asset_registry_db" \
 		--daemon-dir "${HOME}" \
 		--db-dir /electrs \
