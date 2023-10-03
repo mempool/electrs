@@ -1,6 +1,7 @@
 use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
 use crate::config::{Config, VERSION_STRING};
 use crate::errors;
+use crate::metrics::Metrics;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
@@ -17,6 +18,7 @@ use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
+use prometheus::{HistogramOpts, HistogramVec};
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
@@ -549,7 +551,12 @@ fn prepare_txs(
 }
 
 #[tokio::main]
-async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receiver<()>) {
+async fn run_server(
+    config: Arc<Config>,
+    query: Arc<Query>,
+    rx: oneshot::Receiver<()>,
+    metric: HistogramVec,
+) {
     let addr = &config.http_addr;
     let socket_file = &config.http_socket_file;
 
@@ -559,11 +566,13 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
     let make_service_fn_inn = || {
         let query = Arc::clone(&query);
         let config = Arc::clone(&config);
+        let metric = metric.clone();
 
         async move {
             Ok::<_, hyper::Error>(service_fn(move |req| {
                 let query = Arc::clone(&query);
                 let config = Arc::clone(&config);
+                let timer = metric.with_label_values(&["all_methods"]).start_timer();
 
                 async move {
                     let method = req.method().clone();
@@ -586,6 +595,7 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
                         resp.headers_mut()
                             .insert("Access-Control-Allow-Origin", origins.parse().unwrap());
                     }
+                    timer.observe_duration();
                     Ok::<_, hyper::Error>(resp)
                 }
             }))
@@ -632,13 +642,17 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
     }
 }
 
-pub fn start(config: Arc<Config>, query: Arc<Query>) -> Handle {
+pub fn start(config: Arc<Config>, query: Arc<Query>, metrics: &Metrics) -> Handle {
     let (tx, rx) = oneshot::channel::<()>();
+    let response_timer = metrics.histogram_vec(
+        HistogramOpts::new("electrs_rest_api", "Electrs REST API response timings"),
+        &["method"],
+    );
 
     Handle {
         tx,
         thread: crate::util::spawn_thread("rest-server", move || {
-            run_server(config, query, rx);
+            run_server(config, query, rx, response_timer);
         }),
     }
 }
