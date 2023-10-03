@@ -1,0 +1,141 @@
+#!/usr/bin/env zsh
+
+# initialize variables
+DAEMON=bitcoin
+NETWORK=mainnet
+FEATURES=default
+DB_FOLDER=/electrs
+NODENAME=$(hostname|cut -d . -f1)
+LOCATION=$(hostname|cut -d . -f2)
+
+# load rust if necessary
+if [ -e "${HOME}/.cargo/env" ];then
+	source "${HOME}/.cargo/env"
+	export PATH="${HOME}/.cargo/bin:${PATH}"
+fi
+
+# which OS?
+case "$(uname -s)" in
+	FreeBSD)
+		OS=FreeBSD
+		NPROC=$(sysctl -n hw.ncpu)
+	;;
+	Darwin)
+		OS=Darwin
+		NPROC=$(sysctl -n hw.ncpu)
+	;;
+	Linux)
+		OS=Linux
+		NPROC=$(grep -c proc /proc/cpuinfo)
+	;;
+	*)
+		OS=Unknown
+		NPROC=4
+	;;
+esac
+
+# which network?
+case "${1}" in
+	mainnet)
+		THREADS=$((NPROC * 2))
+	;;
+	testnet)
+		NETWORK=testnet
+		THREADS=$((NPROC * 1))
+	;;
+	signet)
+		NETWORK=signet
+		THREADS=$((NPROC * 1))
+	;;
+	liquid)
+		DAEMON=elements
+		NETWORK=liquid
+		FEATURES=liquid
+		THREADS=$((NPROC * 1))
+	;;
+	liquidtestnet)
+		DAEMON=elements
+		NETWORK=liquidtestnet
+		FEATURES=liquid
+		THREADS=$((NPROC * 1))
+	;;
+	*)
+		echo "Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet)"
+		exit 1
+	;;
+esac
+
+# run in loop in case of crash
+until false
+do
+	# reset CWD
+	cd "${HOME}/electrs"
+
+	# disable making electrs.core files
+	ulimit -c 0
+
+	# prepare run-time variables
+	UTXOS_LIMIT=500
+	ELECTRUM_TXS_LIMIT=500
+	DAEMON_CONF="${HOME}/${DAEMON}.conf"
+	HTTP_SOCKET_FILE="${HOME}/socket/esplora-${DAEMON}-${NETWORK}"
+	RPC_SOCKET_FILE="${HOME}/socket/electrum-${DAEMON}-${NETWORK}"
+
+	# get RPC credentials from bitcoin.conf or elements.conf directly
+	echo "[*] Getting RPC credentials from ${DAEMON_CONF}"
+	RPC_USER=$(grep 'rpcuser=' "${DAEMON_CONF}"|cut -d = -f2|head -1)
+	RPC_PASS=$(grep 'rpcpassword=' "${DAEMON_CONF}"|cut -d = -f2|head -1)
+
+	# override limits based on hostname
+	if [ "${NODENAME}" = "node201" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+
+	# Run the popular address txt file generator before each run
+	POPULAR_SCRIPTS_FOLDER="${HOME}/popular-scripts/${NETWORK}"
+	POPULAR_SCRIPTS_FILE_RAW="${POPULAR_SCRIPTS_FOLDER}/popular-scripts-raw.txt"
+	POPULAR_SCRIPTS_FILE="${POPULAR_SCRIPTS_FOLDER}/popular-scripts.txt"
+	mkdir -p "${POPULAR_SCRIPTS_FOLDER}"
+	rm -f "${POPULAR_SCRIPTS_FILE_RAW}" "${POPULAR_SCRIPTS_FILE}"
+
+	## Use nproc * 4 threads to generate the txt file (lots of iowait, so 2x~4x core count is ok)
+	## Only pick up addresses with 101 history events or more
+	## (Without lowering MIN_HISTORY_ITEMS_TO_CACHE this is the lowest we can go)
+	## It prints out progress to STDERR
+	echo "[*] Generating popular-scripts using ${THREADS} threads..."
+	HIGH_USAGE_THRESHOLD=101 \
+	JOB_THREAD_COUNT=${THREADS} \
+	cargo run \
+		--release \
+		--bin popular-scripts \
+		--features "${FEATURES}" \
+		-- \
+		--network "${NETWORK}" \
+		--db-dir "${DB_FOLDER}" \
+		> "${POPULAR_SCRIPTS_FILE_RAW}"
+
+	## Sorted and deduplicated just in case
+	sort "${POPULAR_SCRIPTS_FILE_RAW}" | uniq > "${POPULAR_SCRIPTS_FILE}"
+
+	# Run the electrs process (Note: db-dir is used in both commands)
+	cargo run \
+		--release \
+		--bin electrs \
+		--features "${FEATURES}" \
+		-- \
+		--network "${NETWORK}" \
+		--daemon-dir "${HOME}" \
+		--db-dir "${DB_FOLDER}" \
+		--rpc-socket-file "${RPC_SOCKET_FILE}" \
+		--http-socket-file "${HTTP_SOCKET_FILE}" \
+		--precache-scripts "${POPULAR_SCRIPTS_FILE}" \
+		--precache-threads "${THREADS}" \
+		--cookie "${RPC_USER}:${RPC_PASS}" \
+		--cors '*' \
+		--address-search \
+		--utxos-limit "${UTXOS_LIMIT}" \
+		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \
+		-vvv
+	sleep 1
+done
