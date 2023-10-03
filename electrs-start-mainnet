@@ -30,6 +30,7 @@ do
 		--bin electrs \
 		-- \
 		--http-socket-file "${HOME}/socket/esplora-bitcoin-mainnet" \
+		--rpc-socket-file "${HOME}/socket/electrum-bitcoin-mainnet" \
 		--precache-scripts "${HOME}/electrs/contrib/popular-scripts.txt" \
 		--daemon-dir "${HOME}" \
 		--db-dir "/electrs" \
