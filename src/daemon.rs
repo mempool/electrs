@@ -320,10 +320,13 @@ impl Daemon {
             let info = daemon.getblockchaininfo()?;
             let mempool = daemon.getmempoolinfo()?;
 
-            if mempool.loaded
-                && !info.initialblockdownload.unwrap_or(false)
-                && info.blocks == info.headers
-            {
+            let ibd_done = if network.is_regtest() {
+                info.blocks == 0 && info.headers == 0
+            } else {
+                false
+            } || !info.initialblockdownload.unwrap_or(false);
+
+            if mempool.loaded && ibd_done && info.blocks == info.headers {
                 break;
             }
 
