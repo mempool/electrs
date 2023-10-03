@@ -99,7 +99,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
     ));
 
     // TODO: configuration for which servers to start
-    let rest_server = rest::start(Arc::clone(&config), Arc::clone(&query));
+    let rest_server = rest::start(Arc::clone(&config), Arc::clone(&query), &metrics);
     let electrum_server = ElectrumRPC::start(Arc::clone(&config), Arc::clone(&query), &metrics);
 
     loop {
