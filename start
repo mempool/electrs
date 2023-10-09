@@ -7,6 +7,7 @@ FEATURES=default
 DB_FOLDER=/electrs
 NODENAME=$(hostname|cut -d . -f1)
 LOCATION=$(hostname|cut -d . -f2)
+USAGE="Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet) [popular-scripts]"
 
 # load rust if necessary
 if [ -e "${HOME}/.cargo/env" ];then
@@ -38,29 +39,87 @@ esac
 case "${1}" in
 	mainnet)
 		THREADS=$((NPROC * 2))
+		CRONJOB_TIMING="20 4 * * *"
 	;;
 	testnet)
 		NETWORK=testnet
 		THREADS=$((NPROC * 1))
+		CRONJOB_TIMING="2 4 * * *"
 	;;
 	signet)
 		NETWORK=signet
 		THREADS=$((NPROC * 1))
+		CRONJOB_TIMING="9 4 * * *"
 	;;
 	liquid)
 		DAEMON=elements
 		NETWORK=liquid
 		FEATURES=liquid
 		THREADS=$((NPROC * 1))
+		CRONJOB_TIMING="12 4 * * *"
 	;;
 	liquidtestnet)
 		DAEMON=elements
 		NETWORK=liquidtestnet
 		FEATURES=liquid
 		THREADS=$((NPROC * 1))
+		CRONJOB_TIMING="17 4 * * *"
 	;;
 	*)
-		echo "Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet)"
+		echo "${USAGE}"
+		exit 1
+	;;
+esac
+
+# Run the popular address txt file generator before each run
+POPULAR_SCRIPTS_FOLDER="${HOME}/popular-scripts/${NETWORK}"
+POPULAR_SCRIPTS_FILE_RAW="${POPULAR_SCRIPTS_FOLDER}/popular-scripts-raw.txt"
+POPULAR_SCRIPTS_FILE="${POPULAR_SCRIPTS_FOLDER}/popular-scripts.txt"
+
+# This function runs the job for generating the popular scripts text file for the precache arg
+generate_popular_scripts() {
+	mkdir -p "${POPULAR_SCRIPTS_FOLDER}"
+	rm -f "${POPULAR_SCRIPTS_FILE_RAW}" "${POPULAR_SCRIPTS_FILE}"
+
+	## Use nproc * 4 threads to generate the txt file (lots of iowait, so 2x~4x core count is ok)
+	## Only pick up addresses with 101 history events or more
+	## (Without lowering MIN_HISTORY_ITEMS_TO_CACHE this is the lowest we can go)
+	## It prints out progress to STDERR
+	echo "[*] Generating popular-scripts using ${THREADS} threads..."
+	cd "${HOME}/electrs"
+	HIGH_USAGE_THRESHOLD=101 \
+	JOB_THREAD_COUNT=${THREADS} \
+	cargo run \
+		--release \
+		--bin popular-scripts \
+		--features "${FEATURES}" \
+		-- \
+		--network "${NETWORK}" \
+		--db-dir "${DB_FOLDER}" \
+		> "${POPULAR_SCRIPTS_FILE_RAW}"
+
+	## Sorted and deduplicated just in case
+	sort "${POPULAR_SCRIPTS_FILE_RAW}" | uniq > "${POPULAR_SCRIPTS_FILE}"
+	rm "${POPULAR_SCRIPTS_FILE_RAW}"
+}
+
+# This function is for inserting the cronjob for generating the popular scripts
+CRONJOB_CMD="\"${HOME}/electrs/start\" \"${NETWORK}\" popular-scripts"
+insert_cronjob() {
+	(crontab -l 2>/dev/null; echo "${CRONJOB_TIMING} ${CRONJOB_CMD}") | crontab -
+}
+
+case "${2}" in
+	popular-scripts)
+		echo "[*] Only generate popular-scripts, then exit"
+		generate_popular_scripts
+		exit 0
+	;;
+	"")
+		# If the 2nd arg isn't passed, just run the normal electrs script as-is
+	;;
+	*)
+		echo "${USAGE}"
 		exit 1
 	;;
 esac
@@ -92,31 +151,13 @@ do
 		ELECTRUM_TXS_LIMIT=9000
 	fi
 
-	# Run the popular address txt file generator before each run
-	POPULAR_SCRIPTS_FOLDER="${HOME}/popular-scripts/${NETWORK}"
-	POPULAR_SCRIPTS_FILE_RAW="${POPULAR_SCRIPTS_FOLDER}/popular-scripts-raw.txt"
-	POPULAR_SCRIPTS_FILE="${POPULAR_SCRIPTS_FOLDER}/popular-scripts.txt"
-	mkdir -p "${POPULAR_SCRIPTS_FOLDER}"
-	rm -f "${POPULAR_SCRIPTS_FILE_RAW}" "${POPULAR_SCRIPTS_FILE}"
+	if [ ! -e "${POPULAR_SCRIPTS_FILE}" ];then
+		generate_popular_scripts
+	fi
 
-	## Use nproc * 4 threads to generate the txt file (lots of iowait, so 2x~4x core count is ok)
-	## Only pick up addresses with 101 history events or more
-	## (Without lowering MIN_HISTORY_ITEMS_TO_CACHE this is the lowest we can go)
-	## It prints out progress to STDERR
-	echo "[*] Generating popular-scripts using ${THREADS} threads..."
-	HIGH_USAGE_THRESHOLD=101 \
-	JOB_THREAD_COUNT=${THREADS} \
-	cargo run \
-		--release \
-		--bin popular-scripts \
-		--features "${FEATURES}" \
-		-- \
-		--network "${NETWORK}" \
-		--db-dir "${DB_FOLDER}" \
-		> "${POPULAR_SCRIPTS_FILE_RAW}"
-
-	## Sorted and deduplicated just in case
-	sort "${POPULAR_SCRIPTS_FILE_RAW}" | uniq > "${POPULAR_SCRIPTS_FILE}"
+	if [ ! (crontab -l | grep "${CRONJOB_CMD}") ];then
+		insert_cronjob
+	fi
 
 	# Run the electrs process (Note: db-dir is used in both commands)
 	cargo run \
