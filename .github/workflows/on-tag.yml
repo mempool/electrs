@@ -94,4 +94,4 @@ jobs:
           --tag ${{ secrets.DOCKER_USERNAME }}/electrs:$TAG \
           --tag ${{ secrets.DOCKER_USERNAME }}/electrs:latest \
           --output "type=registry" . \
-          --build-arg commitHash=$SORT_SHA
+          --build-arg commitHash=$SHORT_SHA
