@@ -8,6 +8,23 @@ DB_FOLDER=/electrs
 NODENAME=$(hostname|cut -d . -f1)
 LOCATION=$(hostname|cut -d . -f2)
 
+# since we know that our nginx will always be the first
+# (closest) proxy from electrs, we set it to 1.
+# If some servers prefer to disable PROXY protocol,
+# set to 0. If the client themselves is proxying the
+# electrum RPCs from other clients, this should be set to
+# the hop that you want to trust to source IP addresses.
+# If that hop doesn't exist, TcpStream's local_addr or
+# "Unix socket" is used, and the PROXY headers are discarded.
+# Image:
+# [electrs] <> [proxy "1"] <> [proxy "2"] <> [electrum client]
+RPC_PROXY_DEPTH=1
+# This chooses the depth of X-Forwarded-For IP to show.
+# A value of 1 is the first value from left to right.
+# Image:
+# "X-Forwarded-For: proxy1, proxy2, proxy3..."
+REST_PROXY_DEPTH=1
+
 # load rust if necessary
 if [ -e "${HOME}/.cargo/env" ];then
 	source "${HOME}/.cargo/env"
@@ -136,6 +153,8 @@ do
 		--address-search \
 		--utxos-limit "${UTXOS_LIMIT}" \
 		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \
+		--electrum-proxy-depth "${RPC_PROXY_DEPTH}" \
+		--rest-proxy-depth "${REST_PROXY_DEPTH}" \
 		-vvv
 	sleep 1
 done

@@ -39,6 +39,8 @@ pub struct Config {
     pub daemon_rpc_addr: SocketAddr,
     pub cookie: Option<String>,
     pub electrum_rpc_addr: SocketAddr,
+    pub electrum_proxy_depth: usize,
+    pub rest_proxy_depth: usize,
     pub http_addr: SocketAddr,
     pub http_socket_file: Option<PathBuf>,
     pub rpc_socket_file: Option<PathBuf>,
@@ -137,6 +139,23 @@ impl Config {
                 Arg::with_name("electrum_rpc_addr")
                     .long("electrum-rpc-addr")
                     .help("Electrum server JSONRPC 'addr:port' to listen on (default: '127.0.0.1:50001' for mainnet, '127.0.0.1:60001' for testnet and '127.0.0.1:60401' for regtest)")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("electrum_proxy_depth")
+                    .long("electrum-proxy-depth")
+                    .help("Electrum server's PROXY protocol header depth. \
+                        ie. a value of 2 means the 2nd closest hop's PROXY header \
+                        will be used to find the source IP. A value of 0 means all \
+                        IPs are ignored. (default: 0)")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("rest_proxy_depth")
+                    .long("rest-proxy-depth")
+                    .help("REST server's X-Forwarded-For IP address depth. \
+                        ie. a value of 2 means the 2nd IP address in the header(s) is used. \
+                        (default: 0)")
                     .takes_value(true),
             )
             .arg(
@@ -393,6 +412,16 @@ impl Config {
                 .unwrap_or(&format!("127.0.0.1:{}", default_electrum_port)),
             "Electrum RPC",
         );
+        let electrum_proxy_depth = m
+            .value_of("electrum_proxy_depth")
+            .unwrap_or("0")
+            .parse::<usize>()
+            .expect("invalid electrum_proxy_depth");
+        let rest_proxy_depth = m
+            .value_of("rest_proxy_depth")
+            .unwrap_or("0")
+            .parse::<usize>()
+            .expect("invalid rest_proxy_depth");
         let http_addr: SocketAddr = str_to_socketaddr(
             m.value_of("http_addr")
                 .unwrap_or(&format!("127.0.0.1:{}", default_http_port)),
@@ -465,6 +494,8 @@ impl Config {
             cookie,
             utxos_limit: value_t_or_exit!(m, "utxos_limit", usize),
             electrum_rpc_addr,
+            electrum_proxy_depth,
+            rest_proxy_depth,
             electrum_txs_limit: value_t_or_exit!(m, "electrum_txs_limit", usize),
             electrum_banner,
             http_addr,
