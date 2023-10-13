@@ -73,7 +73,7 @@ tempfile = "3.0"
 
 [profile.release]
 lto = true
-panic = 'abort'
+panic = 'unwind' # This is default, but required, so explicitly writing it
 codegen-units = 1
 
 [patch.crates-io.electrum-client]
