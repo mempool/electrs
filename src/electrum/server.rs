@@ -1141,11 +1141,7 @@ impl Read for ConnectionStream {
 
 /// This is a slightly modified version of read_until from standard library BufRead trait.
 /// After every read we check if there's a PROXY protocol header at the beginning of the read.
-fn read_until(
-    r: &mut BufReader<ConnectionStream>,
-    delim: u8,
-    buf: &mut Vec<u8>,
-) -> std::io::Result<usize> {
+fn read_until(r: &mut impl BufRead, delim: u8, buf: &mut Vec<u8>) -> std::io::Result<usize> {
     let mut read = 0;
     let mut carry_over_arr = [0_u8; 256];
     let mut carrying_over = 0;
@@ -1157,25 +1153,35 @@ fn read_until(
                 Err(e) => return Err(e),
             };
 
-            let skipped_count = if carrying_over > 0 {
+            // If carry over, try to parse PROXY headers.
+            let (carry_skipped_count, exit_error) = if carrying_over > 0 {
                 process_carry_over(&mut carrying_over, &mut carry_over_arr, &mut available)
             } else {
-                // Added to read_until impl: Try parsing PROXY headers after every read.
-                let (_, skipped_count) = parse_proxy_headers(&mut available, 0);
-                skipped_count
+                (0, false)
             };
+            // Rare edge case. If we carry over a proxy parse and it still errors
+            // It is most likely an unknown format
+            if exit_error {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+            }
 
-            match memchr::memchr(delim, available) {
-                Some(i) => {
+            // Try parsing PROXY headers after every read.
+            let (_, skipped_count, exit_error) = parse_proxy_headers(&mut available, 0);
+            let skipped_count = carry_skipped_count + skipped_count;
+
+            match (memchr::memchr(delim, available), exit_error) {
+                (Some(i), false) => {
                     buf.extend_from_slice(&available[..=i]);
                     (true, i + 1 + skipped_count)
                 }
-                None => {
+                (None, _) | (_, true) => {
                     // Added: carry over
-                    carrying_over = available.len();
-                    carry_over_arr[..carrying_over].copy_from_slice(available);
+                    insert_carry_over(&mut carrying_over, &mut carry_over_arr, available);
 
-                    buf.extend_from_slice(available);
+                    if !exit_error {
+                        buf.extend_from_slice(available);
+                    }
+
                     (false, available.len() + skipped_count)
                 }
             }
@@ -1211,25 +1217,40 @@ fn proxy_header_to_source_socket_addr(p_header: ProxyHeader) -> Option<SocketAdd
 fn parse_proxy_headers(
     buf: &mut &[u8],
     electrum_proxy_depth: usize,
-) -> (Option<SocketAddr>, usize) {
-    trace!("Starting parse PROXY headers: {:?}", &buf[..12]);
+) -> (Option<SocketAddr>, usize, bool) {
+    trace!("Starting parse PROXY headers: {:?}", buf.get(..12));
     let mut addr = None;
     let mut current_header_index = 0;
     let before_len = buf.len();
+    // Save the original state of the buf
+    let mut original_buf = *buf;
+    let mut error_exit = false;
     // The last header is the outer-most proxy
     // Warning do not early return. ONLY break the loop.
     loop {
         let p_header = match proxy_protocol::parse(buf) {
             Ok(h) => h,
+            // NotProxyHeader definitely does not move the buf pointer.
             Err(proxy_protocol::ParseError::NotProxyHeader) => break,
-            // This won't move the buf cursor forward
+            // This can move the buf cursor forward
             // and will most likely end in an error higher in the call stack
             // This means "PROXY protocol was used, but it was in an unknown format"
             // (Maybe someday if nginx/etc. uses a new version of the protocol
             // and we don't update the dependency to a version that handles the new
             // version, it might break.)
-            Err(_) => break,
+            // OR it could mean a PROXY header fell on the BufReader buffer boundary.
+            Err(_) => {
+                // This is the buf state before this error returned.
+                // This match arm will modify buf past the version bytes
+                // and stop in a state pointing to the middle of a broken header.
+                // We return the buf state to the beginning of the previous version bytes.
+                *buf = original_buf;
+                error_exit = true;
+                break;
+            }
         };
+        // After each successful header parse, save the new buf state.
+        original_buf = *buf;
         trace!("Parsed PROXY protocol header: {:?}", p_header);
         // Increment from 0 to 1 before the first check
         current_header_index += 1;
@@ -1242,7 +1263,7 @@ fn parse_proxy_headers(
         // parsed when the 1 based index is equal
         addr = proxy_header_to_source_socket_addr(p_header);
     }
-    (addr, before_len - buf.len())
+    (addr, before_len - buf.len(), error_exit)
 }
 
 fn parse_panic_error(e: &(dyn std::any::Any + Send)) -> &str {
@@ -1263,7 +1284,8 @@ fn process_carry_over(
     carrying_over: &mut usize,
     carry_over: &mut [u8],
     available: &mut &[u8],
-) -> usize {
+) -> (usize, bool) {
+    // Step 0: Copy as much from available into carry_over to try and parse
     // How much space do we have left in the array?
     let empty_space = carry_over.len() - *carrying_over;
     // How many bytes should we copy over?
@@ -1272,25 +1294,127 @@ fn process_carry_over(
     carry_over[*carrying_over..*carrying_over + copy_bytes]
         .copy_from_slice(&available[..copy_bytes]);
 
-    // Figure out if it was a proxy header or not.
+    // Step 1: Figure out if it was a proxy header or not.
     #[allow(clippy::redundant_slicing)]
     let mut cursor = &carry_over[..];
-    let before_len = cursor.len();
-    let was_proxy = proxy_protocol::parse(&mut cursor).is_ok();
-    let skipped_count = before_len - cursor.len();
+    let (_, skipped_count, exit_error) = parse_proxy_headers(&mut cursor, 0);
 
-    let skip_count = if was_proxy {
-        // We only want to skip the amount in the new buffer
-        skipped_count.saturating_sub(*carrying_over)
-    } else {
-        0
-    };
+    // Step 2: Figure out how much we need to skip available forward
+    let skip_count = skipped_count.saturating_sub(*carrying_over);
 
-    // Move the available cursor
+    // Step 3: Move the available cursor
     *available = &available[skip_count..];
-    // Reset carrying over (writing 0s to the array is unnecessary)
+    // Step 4: Reset carrying over (writing 0s to the array is unnecessary)
     *carrying_over = 0;
 
     // Return the skip count so we can call consume later
-    skip_count
+    (skip_count, exit_error)
+}
+
+/// Insert the carry over
+fn insert_carry_over(carrying_over: &mut usize, carry_over_arr: &mut [u8], available: &[u8]) {
+    *carrying_over = available.len().min(carry_over_arr.len());
+    carry_over_arr[..*carrying_over].copy_from_slice(&available[..*carrying_over]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_until() {
+        // len 48
+        let v1 = "PROXY TCP6 ab:ce:ef:01:23:45:67:89 ::1 0 65535\r\n"
+            .as_bytes()
+            .to_vec();
+        // len 31
+        let v2 =
+            hex::decode("0d0a0d0a000d0a515549540a2111000f7f000001c0a80001ffff0101450000").unwrap();
+        let simple_json = "{}\n".as_bytes().to_vec();
+        // len 26
+        let larger_json = r#"{"id":2,"name":"electrs"}\n"#.as_bytes().to_vec();
+
+        let vectors: Vec<(Vec<u8>, usize, &[u8], std::result::Result<usize, String>)> = vec![
+            // Simple JSON with LF
+            (simple_json.clone(), 3, &simple_json, Ok(3)),
+            // Simple JSON with LF + PROXY v1
+            (
+                [v1.clone(), simple_json.clone()].concat(),
+                51,
+                &simple_json,
+                Ok(51),
+            ),
+            // Simple JSON with LF + PROXY v2
+            (
+                [v2.clone(), simple_json.clone()].concat(),
+                34,
+                &simple_json,
+                Ok(34),
+            ),
+            // Simple JSON with LF + two layers of proxy
+            (
+                [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+                82,
+                &simple_json,
+                Ok(82),
+            ),
+            // Simple JSON that goes over the buffer boundary
+            (
+                larger_json.clone(),
+                2, // capacity
+                &larger_json,
+                Ok(27),
+            ),
+            // Simple JSON with LF + two layers of proxy
+            (
+                [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+                45, // 3 bytes before v1 header ends
+                &simple_json,
+                Ok(82),
+            ),
+            // Simple JSON with LF + two layers of proxy
+            (
+                [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+                46, // 2 bytes before v1 header ends
+                &simple_json,
+                Ok(82),
+            ),
+            // Capacity exactly on the last byte of v1 == parser error (library)
+            // TODO: make PR for upstream
+            // (
+            //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+            //     47, // 1 bytes before v1 header ends (just befor \n)
+            //     &simple_json,
+            //     Ok(82),
+            // ),
+            // TODO: When the BufReader boundary hits in a v2 PROXY header it crashes
+            // (
+            //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+            //     49, // 1 byte into v2 header
+            //     &simple_json,
+            //     Ok(82),
+            // ),
+            // TODO: make PR for upstream to bail when TLV is cut short
+            // (
+            //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+            //     77, // 2 bytes short of v2 ending
+            //     &simple_json,
+            //     Ok(82),
+            // ),
+            (
+                [v1.clone(), v2.clone(), larger_json.clone()].concat(),
+                80, // 1 after v2 ends
+                &larger_json,
+                Ok(106),
+            ),
+        ];
+
+        for (input, capacity, bytes, count) in vectors {
+            let mut buf = BufReader::with_capacity(capacity, input.as_slice());
+            let mut v = vec![];
+            let result_count = read_until(&mut buf, b'\n', &mut v).map_err(|e| format!("{e}"));
+            assert_eq!(count, result_count);
+            assert_eq!(bytes, &v);
+        }
+    }
 }
