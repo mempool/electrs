@@ -398,49 +398,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
-name = "electrs"
-version = "3.0.0-dev"
-dependencies = [
- "arrayref",
- "base64 0.13.0",
- "bincode",
- "bitcoin 0.28.0",
- "bounded-vec-deque",
- "clap",
- "crossbeam-channel",
- "dirs",
- "electrum-client",
- "elements",
- "error-chain",
- "glob",
- "hex",
- "hyper",
- "hyperlocal",
- "itertools",
- "lazy_static",
- "libc",
- "log",
- "num_cpus",
- "page_size",
- "prometheus",
- "rayon",
- "rocksdb",
- "serde",
- "serde_derive",
- "serde_json",
- "sha2",
- "signal-hook",
- "socket2",
- "stderrlog",
- "sysconf",
- "tempfile",
- "time 0.3.9",
- "tiny_http",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "electrum-client"
 version = "0.8.0"
 source = "git+https://github.com/Blockstream/rust-electrum-client?rev=d3792352992a539afffbe11501d1aff9fd5b919d#d3792352992a539afffbe11501d1aff9fd5b919d"
@@ -861,6 +818,49 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
 dependencies = [
  "autocfg 1.1.0",
+]
+
+[[package]]
+name = "mempool-electrs"
+version = "3.0.0-dev"
+dependencies = [
+ "arrayref",
+ "base64 0.13.0",
+ "bincode",
+ "bitcoin 0.28.0",
+ "bounded-vec-deque",
+ "clap",
+ "crossbeam-channel",
+ "dirs",
+ "electrum-client",
+ "elements",
+ "error-chain",
+ "glob",
+ "hex",
+ "hyper",
+ "hyperlocal",
+ "itertools",
+ "lazy_static",
+ "libc",
+ "log",
+ "num_cpus",
+ "page_size",
+ "prometheus",
+ "rayon",
+ "rocksdb",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "socket2",
+ "stderrlog",
+ "sysconf",
+ "tempfile",
+ "time 0.3.9",
+ "tiny_http",
+ "tokio",
+ "url",
 ]
 
 [[package]]

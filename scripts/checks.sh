@@ -59,4 +59,4 @@ cargo clippy $@ -q -F electrum-discovery,liquid
 
 TESTNAME="Running cargo test with all features"
 echo "$TESTNAME"
-cargo test $@ -q --package electrs --lib --all-features
+cargo test $@ -q --lib --all-features
