@@ -85,7 +85,7 @@ impl Config {
     pub fn from_args() -> Config {
         let network_help = format!("Select network type ({})", Network::names().join(", "));
 
-        let args = App::new("Electrum Rust Server")
+        let args = App::new("Mempool Electrum Rust Server")
             .version(crate_version!())
             .arg(
                 Arg::with_name("version")
