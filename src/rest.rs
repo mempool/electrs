@@ -1023,6 +1023,29 @@ fn handle_request(
                 json_response(tx.remove(0), ttl)
             }
         }
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"txs"), None, None, None) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            match txid_strings
+                .into_iter()
+                .map(|txid| Txid::from_hex(&txid))
+                .collect::<Result<Vec<Txid>, _>>()
+            {
+                Ok(txids) => {
+                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
+                        .iter()
+                        .filter_map(|txid| {
+                            query
+                                .lookup_txn(txid)
+                                .map(|tx| (tx, query.chain().tx_confirming_block(txid)))
+                        })
+                        .collect();
+                    json_response(prepare_txs(txs, query, config), 0)
+                }
+                Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
+            }
+        }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
             let hash = Txid::from_hex(hash)?;
