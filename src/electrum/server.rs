@@ -636,7 +636,10 @@ fn get_history(
 ) -> Result<Vec<(Txid, Option<BlockId>)>> {
     // to avoid silently trunacting history entries, ask for one extra more than the limit and fail if it exists
     let history_txids = query.history_txids(scripthash, txs_limit + 1);
-    ensure!(history_txids.len() <= txs_limit, ErrorKind::TooPopular);
+    ensure!(
+        history_txids.len() <= txs_limit,
+        ErrorKind::TooManyTxs(txs_limit)
+    );
     Ok(history_txids)
 }
 
