@@ -37,27 +37,27 @@ esac
 # which network?
 case "${1}" in
 	mainnet)
-		THREADS=$((NPROC * 1))
+		THREADS=$((NPROC / 2))
 	;;
 	testnet)
 		NETWORK=testnet
-		THREADS=$((NPROC / 2))
+		THREADS=$((NPROC / 4))
 	;;
 	signet)
 		NETWORK=signet
-		THREADS=$((NPROC / 2))
+		THREADS=$((NPROC / 4))
 	;;
 	liquid)
 		DAEMON=elements
 		NETWORK=liquid
 		FEATURES=liquid
-		THREADS=$((NPROC / 2))
+		THREADS=$((NPROC / 4))
 	;;
 	liquidtestnet)
 		DAEMON=elements
 		NETWORK=liquidtestnet
 		FEATURES=liquid
-		THREADS=$((NPROC / 2))
+		THREADS=$((NPROC / 4))
 	;;
 	*)
 		echo "Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet)"
