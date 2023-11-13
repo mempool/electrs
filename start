@@ -37,7 +37,7 @@ esac
 # which network?
 case "${1}" in
 	mainnet)
-		THREADS=$((NPROC * 2))
+		THREADS=$((NPROC * 1))
 	;;
 	testnet)
 		NETWORK=testnet
