@@ -51,7 +51,7 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-test-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo test --package electrs --lib --all-features
+      - run: cargo test --lib --all-features
 
   clippy:
     name: Linter

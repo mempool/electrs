@@ -53,6 +53,9 @@ const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
+// internal api prefix
+const INTERNAL_PREFIX: &str = "internal";
+
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
     id: String,
@@ -740,17 +743,19 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
-        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), None, None) => {
+        (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
+            let block_id = query.chain().blockid_by_hash(&hash);
             let txs = query
                 .chain()
                 .get_block_txs(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
                 .into_iter()
-                .map(|tx| (tx, None))
+                .map(|tx| (tx, block_id.clone()))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            let ttl = ttl_by_depth(block_id.map(|b| b.height), query);
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -1034,6 +1039,29 @@ fn handle_request(
                 json_response(tx.remove(0), ttl)
             }
         }
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"txs"), None, None, None) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            match txid_strings
+                .into_iter()
+                .map(|txid| Txid::from_hex(&txid))
+                .collect::<Result<Vec<Txid>, _>>()
+            {
+                Ok(txids) => {
+                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
+                        .iter()
+                        .filter_map(|txid| {
+                            query
+                                .lookup_txn(txid)
+                                .map(|tx| (tx, query.chain().tx_confirming_block(txid)))
+                        })
+                        .collect();
+                    json_response(prepare_txs(txs, query, config), 0)
+                }
+                Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
+            }
+        }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
             let hash = Txid::from_hex(hash)?;
@@ -1172,6 +1200,69 @@ fn handle_request(
 
             json_response(spends, TTL_SHORT)
         }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-txid"),
+            None,
+        ) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<Vec<SpendingValue>> = txid_strings
+                .into_iter()
+                .map(|txid_str| {
+                    Txid::from_hex(&txid_str)
+                        .ok()
+                        .and_then(|txid| query.lookup_txn(&txid))
+                        .map_or_else(Vec::new, |tx| {
+                            query
+                                .lookup_tx_spends(tx)
+                                .into_iter()
+                                .map(|spend| {
+                                    spend.map_or_else(SpendingValue::default, SpendingValue::from)
+                                })
+                                .collect()
+                        })
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-outpoint"),
+            None,
+        ) => {
+            let outpoint_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<SpendingValue> = outpoint_strings
+                .into_iter()
+                .map(|outpoint_str| {
+                    let mut parts = outpoint_str.split(':');
+                    let hash_part = parts.next();
+                    let index_part = parts.next();
+
+                    if let (Some(hash), Some(index)) = (hash_part, index_part) {
+                        if let (Ok(txid), Ok(vout)) = (Txid::from_hex(hash), index.parse::<u32>()) {
+                            let outpoint = OutPoint { txid, vout };
+                            return query
+                                .lookup_spend(&outpoint)
+                                .map_or_else(SpendingValue::default, SpendingValue::from);
+                        }
+                    }
+                    SpendingValue::default()
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
 
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
@@ -1179,7 +1270,14 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
-        (&Method::GET, Some(&"mempool"), Some(&"txs"), Some(&"all"), None, None) => {
+        (
+            &Method::GET,
+            Some(&INTERNAL_PREFIX),
+            Some(&"mempool"),
+            Some(&"txs"),
+            Some(&"all"),
+            None,
+        ) => {
             let txs = query
                 .mempool()
                 .txs()
@@ -1189,7 +1287,7 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
-        (&Method::POST, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"mempool"), Some(&"txs"), None, None) => {
             let txid_strings: Vec<String> =
                 serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
 
@@ -1212,7 +1310,14 @@ fn handle_request(
                 Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
             }
         }
-        (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
+        (
+            &Method::GET,
+            Some(&INTERNAL_PREFIX),
+            Some(&"mempool"),
+            Some(&"txs"),
+            last_seen_txid,
+            None,
+        ) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
             let txs = query
                 .mempool()
