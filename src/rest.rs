@@ -731,15 +731,17 @@ fn handle_request(
         }
         (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
+            let block_id = query.chain().blockid_by_hash(&hash);
             let txs = query
                 .chain()
                 .get_block_txs(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
                 .into_iter()
-                .map(|tx| (tx, None))
+                .map(|tx| (tx, block_id.clone()))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            let ttl = ttl_by_depth(block_id.map(|b| b.height), query);
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
