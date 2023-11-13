@@ -1186,6 +1186,69 @@ fn handle_request(
 
             json_response(spends, TTL_SHORT)
         }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-txid"),
+            None,
+        ) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<Vec<SpendingValue>> = txid_strings
+                .into_iter()
+                .map(|txid_str| {
+                    Txid::from_hex(&txid_str)
+                        .ok()
+                        .and_then(|txid| query.lookup_txn(&txid))
+                        .map_or_else(Vec::new, |tx| {
+                            query
+                                .lookup_tx_spends(tx)
+                                .into_iter()
+                                .map(|spend| {
+                                    spend.map_or_else(SpendingValue::default, SpendingValue::from)
+                                })
+                                .collect()
+                        })
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-outpoint"),
+            None,
+        ) => {
+            let outpoint_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<SpendingValue> = outpoint_strings
+                .into_iter()
+                .map(|outpoint_str| {
+                    let mut parts = outpoint_str.split(':');
+                    let hash_part = parts.next();
+                    let index_part = parts.next();
+
+                    if let (Some(hash), Some(index)) = (hash_part, index_part) {
+                        if let (Ok(txid), Ok(vout)) = (Txid::from_hex(hash), index.parse::<u32>()) {
+                            let outpoint = OutPoint { txid, vout };
+                            return query
+                                .lookup_spend(&outpoint)
+                                .map_or_else(SpendingValue::default, SpendingValue::from);
+                        }
+                    }
+                    SpendingValue::default()
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
 
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
