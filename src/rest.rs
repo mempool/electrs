@@ -1305,9 +1305,13 @@ fn handle_request(
             None,
         ) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(config.rest_max_mempool_page_size);
             let txs = query
                 .mempool()
-                .txs_page(10_000, last_seen_txid)
+                .txs_page(max_txs, last_seen_txid)
                 .into_iter()
                 .map(|tx| (tx, None))
                 .collect();
