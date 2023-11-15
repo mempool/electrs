@@ -58,6 +58,7 @@ pub struct Config {
     pub rest_default_block_limit: usize,
     pub rest_default_chain_txs_per_page: usize,
     pub rest_default_max_mempool_txs: usize,
+    pub rest_max_mempool_page_size: usize,
 
     #[cfg(feature = "liquid")]
     pub parent_network: BNetwork,
@@ -230,6 +231,12 @@ impl Config {
                     .long("rest-default-max-mempool-txs")
                     .help("The default number of mempool transactions returned by the txs endpoints.")
                     .default_value("50")
+            )
+            .arg(
+                Arg::with_name("rest_max_mempool_page_size")
+                    .long("rest-max-mempool-page-size")
+                    .help("The maximum number of transactions returned by the paginated /internal/mempool/txs endpoint.")
+                    .default_value("1000")
             )
             .arg(
                 Arg::with_name("electrum_txs_limit")
@@ -484,6 +491,7 @@ impl Config {
                 "rest_default_max_mempool_txs",
                 usize
             ),
+            rest_max_mempool_page_size: value_t_or_exit!(m, "rest_max_mempool_page_size", usize),
             jsonrpc_import: m.is_present("jsonrpc_import"),
             light_mode: m.is_present("light_mode"),
             address_search: m.is_present("address_search"),
