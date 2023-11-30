@@ -329,7 +329,12 @@ impl Indexer {
             .added_blockhashes
             .write()
             .unwrap()
-            .extend(blocks.iter().map(|b| b.entry.hash()));
+            .extend(blocks.iter().map(|b| {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("Tx indexing is up to height={}", b.entry.height());
+                }
+                b.entry.hash()
+            }));
     }
 
     fn index(&self, blocks: &[BlockEntry]) {
@@ -342,6 +347,9 @@ impl Indexer {
             let _timer = self.start_timer("index_process");
             let added_blockhashes = self.store.added_blockhashes.read().unwrap();
             for b in blocks {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("History indexing is up to height={}", b.entry.height());
+                }
                 let blockhash = b.entry.hash();
                 // TODO: replace by lookup into txstore_db?
                 if !added_blockhashes.contains(blockhash) {
