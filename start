@@ -77,6 +77,7 @@ do
 	# prepare run-time variables
 	UTXOS_LIMIT=500
 	ELECTRUM_TXS_LIMIT=500
+	MAIN_LOOP_DELAY=500
 	DAEMON_CONF="${HOME}/${DAEMON}.conf"
 	HTTP_SOCKET_FILE="${HOME}/socket/esplora-${DAEMON}-${NETWORK}"
 	RPC_SOCKET_FILE="${HOME}/socket/electrum-${DAEMON}-${NETWORK}"
@@ -90,6 +91,7 @@ do
 	if [ "${NODENAME}" = "node201" ];then
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
+		MAIN_LOOP_DELAY=14000
 	fi
 
 	# Run the popular address txt file generator before each run
@@ -127,6 +129,7 @@ do
 		--network "${NETWORK}" \
 		--daemon-dir "${HOME}" \
 		--db-dir "${DB_FOLDER}" \
+		--main-loop-delay "${MAIN_LOOP_DELAY}" \
 		--rpc-socket-file "${RPC_SOCKET_FILE}" \
 		--http-socket-file "${HTTP_SOCKET_FILE}" \
 		--precache-scripts "${POPULAR_SCRIPTS_FILE}" \
