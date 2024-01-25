@@ -1256,6 +1256,12 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
+        (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(prefix), None, None) => {
+            match query.mempool().txids_by_prefix(prefix) {
+                Ok(txids) => json_response(txids, TTL_SHORT),
+                Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
+            }
+        }
         (
             &Method::GET,
             Some(&INTERNAL_PREFIX),

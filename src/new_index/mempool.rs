@@ -1,3 +1,4 @@
+use bitcoin::hashes::Hash;
 use bounded_vec_deque::BoundedVecDeque;
 use itertools::Itertools;
 
@@ -286,6 +287,30 @@ impl Mempool {
     pub fn txids(&self) -> Vec<&Txid> {
         let _timer = self.latency.with_label_values(&["txids"]).start_timer();
         self.txstore.keys().collect()
+    }
+
+    // Get all txids in the mempool with the given prefix
+    pub fn txids_by_prefix(&self, prefix: &str) -> Result<Vec<&Txid>> {
+        let _timer = self
+            .latency
+            .with_label_values(&["txids_by_prefix"])
+            .start_timer();
+
+        // get Txid range bounds for the given prefix
+        let start_bytes =
+            hex::decode(format!("{:0<64}", prefix)).chain_err(|| "invalid hash prefix")?;
+        let end_bytes =
+            hex::decode(format!("{:f<64}", prefix)).chain_err(|| "invalid hash prefix")?;
+        let start_txid =
+            Txid::from_hash(Hash::from_slice(&start_bytes).chain_err(|| "invalid hash prefix")?);
+        let end_txid =
+            Txid::from_hash(Hash::from_slice(&end_bytes).chain_err(|| "invalid hash prefix")?);
+
+        Ok(self
+            .txstore
+            .range(start_txid..=end_txid)
+            .map(|(k, _v)| k)
+            .collect())
     }
 
     // Get all txs in the mempool
