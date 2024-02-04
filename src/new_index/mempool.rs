@@ -210,7 +210,7 @@ impl Mempool {
 
                     Some(Utxo {
                         txid: deserialize(&info.txid).expect("invalid txid"),
-                        vout: info.vout as u32,
+                        vout: info.vout,
                         value: info.value,
                         confirmed: None,
 
@@ -452,9 +452,9 @@ impl Mempool {
                     compute_script_hash(&prevout.script_pubkey),
                     TxHistoryInfo::Spending(SpendingInfo {
                         txid: txid_bytes,
-                        vin: input_index as u16,
+                        vin: input_index,
                         prev_txid: full_hash(&txi.previous_output.txid[..]),
-                        prev_vout: txi.previous_output.vout as u16,
+                        prev_vout: txi.previous_output.vout,
                         value: prevout.value,
                     }),
                 )
@@ -473,7 +473,7 @@ impl Mempool {
                         compute_script_hash(&txo.script_pubkey),
                         TxHistoryInfo::Funding(FundingInfo {
                             txid: txid_bytes,
-                            vout: index as u16,
+                            vout: index as u32,
                             value: txo.value,
                         }),
                     )
