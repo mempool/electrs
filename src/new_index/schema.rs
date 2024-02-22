@@ -329,7 +329,12 @@ impl Indexer {
             .added_blockhashes
             .write()
             .unwrap()
-            .extend(blocks.iter().map(|b| b.entry.hash()));
+            .extend(blocks.iter().map(|b| {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("Tx indexing is up to height={}", b.entry.height());
+                }
+                b.entry.hash()
+            }));
     }
 
     fn index(&self, blocks: &[BlockEntry]) {
@@ -342,6 +347,9 @@ impl Indexer {
             let _timer = self.start_timer("index_process");
             let added_blockhashes = self.store.added_blockhashes.read().unwrap();
             for b in blocks {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("History indexing is up to height={}", b.entry.height());
+                }
                 let blockhash = b.entry.hash();
                 // TODO: replace by lookup into txstore_db?
                 if !added_blockhashes.contains(blockhash) {
@@ -570,7 +578,7 @@ impl ChainQuery {
     }
 
     // TODO: avoid duplication with stats/stats_delta?
-    pub fn utxo(&self, scripthash: &[u8], limit: usize) -> Result<Vec<Utxo>> {
+    pub fn utxo(&self, scripthash: &[u8], limit: usize, flush: DBFlush) -> Result<Vec<Utxo>> {
         let _timer = self.start_timer("utxo");
 
         // get the last known utxo set and the blockhash it was updated for.
@@ -598,7 +606,7 @@ impl ChainQuery {
             if had_cache || processed_items > MIN_HISTORY_ITEMS_TO_CACHE {
                 self.store.cache_db.write(
                     vec![UtxoCacheRow::new(scripthash, &newutxos, &lastblock).into_row()],
-                    DBFlush::Enable,
+                    flush,
                 );
             }
         }
@@ -671,14 +679,14 @@ impl ChainQuery {
 
             // abort if the utxo set size excedees the limit at any point in time
             if utxos.len() > limit {
-                bail!(ErrorKind::TooPopular)
+                bail!(ErrorKind::TooManyUtxos(limit))
             }
         }
 
         Ok((utxos, lastblock, processed_items))
     }
 
-    pub fn stats(&self, scripthash: &[u8]) -> ScriptStats {
+    pub fn stats(&self, scripthash: &[u8], flush: DBFlush) -> ScriptStats {
         let _timer = self.start_timer("stats");
 
         // get the last known stats and the blockhash they are updated for.
@@ -706,7 +714,7 @@ impl ChainQuery {
             if newstats.funded_txo_count + newstats.spent_txo_count > MIN_HISTORY_ITEMS_TO_CACHE {
                 self.store.cache_db.write(
                     vec![StatsCacheRow::new(scripthash, &newstats, &lastblock).into_row()],
-                    DBFlush::Enable,
+                    flush,
                 );
             }
         }

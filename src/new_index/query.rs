@@ -88,7 +88,11 @@ impl Query {
     }
 
     pub fn utxo(&self, scripthash: &[u8]) -> Result<Vec<Utxo>> {
-        let mut utxos = self.chain.utxo(scripthash, self.config.utxos_limit)?;
+        let mut utxos = self.chain.utxo(
+            scripthash,
+            self.config.utxos_limit,
+            super::db::DBFlush::Enable,
+        )?;
         let mempool = self.mempool();
         utxos.retain(|utxo| !mempool.has_spend(&OutPoint::from(utxo)));
         utxos.extend(mempool.utxo(scripthash));
@@ -111,7 +115,7 @@ impl Query {
 
     pub fn stats(&self, scripthash: &[u8]) -> (ScriptStats, ScriptStats) {
         (
-            self.chain.stats(scripthash),
+            self.chain.stats(scripthash, super::db::DBFlush::Enable),
             self.mempool().stats(scripthash),
         )
     }

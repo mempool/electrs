@@ -8,27 +8,52 @@ use hex;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
+use std::sync::{atomic::AtomicUsize, Arc};
+use std::time::Instant;
 
-pub fn precache(chain: &ChainQuery, scripthashes: Vec<FullHash>) {
+pub fn precache(chain: Arc<ChainQuery>, scripthashes: Vec<FullHash>, threads: usize) {
     let total = scripthashes.len();
-    info!("Pre-caching stats and utxo set for {} scripthashes", total);
+    info!(
+        "Pre-caching stats and utxo set on {} threads for {} scripthashes",
+        threads, total
+    );
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(16)
+        .num_threads(threads)
         .thread_name(|i| format!("precache-{}", i))
         .build()
         .unwrap();
-    pool.install(|| {
-        scripthashes
-            .par_iter()
-            .enumerate()
-            .for_each(|(i, scripthash)| {
-                if i % 5 == 0 {
-                    info!("running pre-cache for scripthash {}/{}", i + 1, total);
-                }
-                chain.stats(&scripthash[..]);
-                //chain.utxo(&scripthash[..]);
-            })
+    let now = Instant::now();
+    let counter = AtomicUsize::new(0);
+    std::thread::spawn(move || {
+        pool.install(|| {
+            scripthashes
+                .par_iter()
+                .for_each(|scripthash| {
+                    // First, cache
+                    chain.stats(&scripthash[..], crate::new_index::db::DBFlush::Disable);
+                    let _ = chain.utxo(&scripthash[..], usize::MAX, crate::new_index::db::DBFlush::Disable);
+
+                    // Then, increment the counter
+                    let pre_increment = counter.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    let post_increment_counter = pre_increment + 1;
+
+                    // Then, log
+                    if post_increment_counter % 500 == 0 {
+                        let now_millis = now.elapsed().as_millis();
+                        info!("{post_increment_counter}/{total} Processed in {now_millis} ms running pre-cache for scripthash");
+                    }
+
+                    // Every 10k counts, flush the DB to disk
+                    if post_increment_counter % 10000 == 0 {
+                        info!("Flushing cache_db... {post_increment_counter}");
+                        chain.store().cache_db().flush();
+                        info!("Done Flushing cache_db!!! {post_increment_counter}");
+                    }
+                })
+        });
+        // After everything is done, flush the cache
+        chain.store().cache_db().flush();
     });
 }
 
