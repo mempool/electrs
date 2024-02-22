@@ -136,11 +136,11 @@ pub(super) mod sigops {
         let mut prevouts = Vec::with_capacity(input_count);
 
         #[cfg(not(feature = "liquid"))]
-        let is_coinbase = tx.is_coin_base();
+        let is_coinbase_or_pegin = tx.is_coin_base();
         #[cfg(feature = "liquid")]
-        let is_coinbase = tx.is_coinbase();
+        let is_coinbase_or_pegin = tx.is_coinbase() || tx.input.iter().any(|input| input.is_pegin);
 
-        if !is_coinbase {
+        if !is_coinbase_or_pegin {
             for idx in 0..input_count {
                 prevouts.push(
                     *prevout_map
@@ -311,7 +311,7 @@ pub(super) mod sigops {
             return Ok(n_sigop_cost);
         }
         #[cfg(feature = "liquid")]
-        if tx.is_coinbase() {
+        if tx.is_coinbase() || tx.input.iter().any(|input| input.is_pegin) {
             return Ok(n_sigop_cost);
         }
         if tx.input.len() != previous_outputs.len() {

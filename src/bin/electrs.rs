@@ -107,7 +107,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
     }
 
     loop {
-        if let Err(err) = signal.wait(Duration::from_millis(500), true) {
+        if let Err(err) = signal.wait(Duration::from_millis(config.main_loop_delay), true) {
             info!("stopping server: {}", err);
 
             electrs::util::spawn_thread("shutdown-thread-checker", || {

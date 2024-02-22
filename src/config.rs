@@ -45,6 +45,7 @@ pub struct Config {
     pub monitoring_addr: SocketAddr,
     pub jsonrpc_import: bool,
     pub light_mode: bool,
+    pub main_loop_delay: u64,
     pub address_search: bool,
     pub index_unspendables: bool,
     pub cors: Option<String>,
@@ -167,6 +168,12 @@ impl Config {
                 Arg::with_name("light_mode")
                     .long("lightmode")
                     .help("Enable light mode for reduced storage")
+            )
+            .arg(
+                Arg::with_name("main_loop_delay")
+                    .long("main-loop-delay")
+                    .help("The number of milliseconds the main loop will wait between loops. (Can be shortened with SIGUSR1)")
+                    .default_value("500")
             )
             .arg(
                 Arg::with_name("address_search")
@@ -494,6 +501,7 @@ impl Config {
             rest_max_mempool_page_size: value_t_or_exit!(m, "rest_max_mempool_page_size", usize),
             jsonrpc_import: m.is_present("jsonrpc_import"),
             light_mode: m.is_present("light_mode"),
+            main_loop_delay: value_t_or_exit!(m, "main_loop_delay", u64),
             address_search: m.is_present("address_search"),
             index_unspendables: m.is_present("index_unspendables"),
             cors: m.value_of("cors").map(|s| s.to_string()),
