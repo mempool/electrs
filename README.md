@@ -1,10 +1,10 @@
-# Esplora - Electrs backend API
+# Mempool - Electrs backend API
 
-A block chain index engine and HTTP API written in Rust based on [romanz/electrs](https://github.com/romanz/electrs).
+A block chain index engine and HTTP API written in Rust based on [romanz/electrs](https://github.com/romanz/electrs) and [Blockstream/electrs](https://github.com/Blockstream/electrs).
 
-Used as the backend for the [Esplora block explorer](https://github.com/Blockstream/esplora) powering [blockstream.info](https://blockstream.info/).
+Used as the backend for the [mempool block explorer](https://github.com/mempool/mempool) powering [mempool.space](https://mempool.space/).
 
-API documentation [is available here](https://github.com/blockstream/esplora/blob/master/API.md).
+API documentation [is available here](https://mempool.space/docs/api/rest).
 
 Documentation for the database schema and indexing process [is available here](doc/schema.md).
 
@@ -13,8 +13,8 @@ Documentation for the database schema and indexing process [is available here](d
 Install Rust, Bitcoin Core (no `txindex` needed) and the `clang` and `cmake` packages, then:
 
 ```bash
-$ git clone https://github.com/blockstream/electrs && cd electrs
-$ git checkout new-index
+$ git clone https://github.com/mempool/electrs && cd electrs
+$ git checkout mempool
 $ cargo run --release --bin electrs -- -vvvv --daemon-dir ~/.bitcoin
 
 # Or for liquid:
@@ -24,11 +24,9 @@ $ cargo run --features liquid --release --bin electrs -- -vvvv --network liquid 
 See [electrs's original documentation](https://github.com/romanz/electrs/blob/master/doc/usage.md) for more detailed instructions.
 Note that our indexes are incompatible with electrs's and has to be created separately.
 
-The indexes require 610GB of storage after running compaction (as of June 2020), but you'll need to have
+The indexes require 1.3TB of storage after running compaction (as of October 2023), but you'll need to have
 free space of about double that available during the index compaction process.
-Creating the indexes should take a few hours on a beefy machine with SSD.
-
-To deploy with Docker, follow the [instructions here](https://github.com/Blockstream/esplora#how-to-build-the-docker-image).
+Creating the indexes should take a few hours on a beefy machine with high speed NVMe SSD(s).
 
 ### Light mode
 
@@ -78,7 +76,7 @@ Additional options with the `electrum-discovery` feature:
 - `--electrum-hosts <json>` - a json map of the public hosts where the electrum server is reachable, in the [`server.features` format](https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server.features).
 - `--electrum-announce` - announce the electrum server on the electrum p2p server discovery network.
 
-See `$ cargo run --release --bin electrs -- --help` for the full list of options.
+See `$ cargo run --bin electrs -- --help` for the full list of options.
 
 ## License
 
