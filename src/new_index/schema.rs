@@ -1095,11 +1095,23 @@ fn lookup_txos(
     outpoints: &BTreeSet<OutPoint>,
     allow_missing: bool,
 ) -> HashMap<OutPoint, TxOut> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(16) // we need to saturate SSD IOPS
-        .thread_name(|i| format!("lookup-txo-{}", i))
-        .build()
-        .unwrap();
+    let mut loop_count = 10;
+    let pool = loop {
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(16) // we need to saturate SSD IOPS
+            .thread_name(|i| format!("lookup-txo-{}", i))
+            .build()
+        {
+            Ok(pool) => break pool,
+            Err(e) => {
+                if loop_count == 0 {
+                    panic!("schema::lookup_txos failed to create a ThreadPool: {}", e);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                loop_count -= 1;
+            }
+        }
+    };
     pool.install(|| {
         outpoints
             .par_iter()
