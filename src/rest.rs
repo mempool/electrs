@@ -582,16 +582,18 @@ async fn run_server(
                     let uri = req.uri().clone();
                     let body = hyper::body::to_bytes(req.into_body()).await?;
 
-                    let mut resp = handle_request(method, uri, body, &query, &config)
-                        .unwrap_or_else(|err| {
-                            warn!("{:?}", err);
-                            Response::builder()
-                                .status(err.0)
-                                .header("Content-Type", "text/plain")
-                                .header("X-Powered-By", &**VERSION_STRING)
-                                .body(Body::from(err.1))
-                                .unwrap()
-                        });
+                    let mut resp = tokio::task::block_in_place(|| {
+                        handle_request(method, uri, body, &query, &config)
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!("{:?}", err);
+                        Response::builder()
+                            .status(err.0)
+                            .header("Content-Type", "text/plain")
+                            .header("X-Powered-By", &**VERSION_STRING)
+                            .body(Body::from(err.1))
+                            .unwrap()
+                    });
                     if let Some(ref origins) = config.cors {
                         resp.headers_mut()
                             .insert("Access-Control-Allow-Origin", origins.parse().unwrap());
