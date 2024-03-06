@@ -288,6 +288,24 @@ impl Mempool {
         self.txstore.keys().collect()
     }
 
+    // Get n txids after the given txid in the mempool
+    pub fn txids_page(&self, n: usize, start: Option<Txid>) -> Vec<&Txid> {
+        let _timer = self
+            .latency
+            .with_label_values(&["txids_page"])
+            .start_timer();
+        let start_bound = match start {
+            Some(txid) => Excluded(txid),
+            None => Unbounded,
+        };
+
+        self.txstore
+            .range((start_bound, Unbounded))
+            .take(n)
+            .map(|(k, _v)| k)
+            .collect()
+    }
+
     // Get all txs in the mempool
     pub fn txs(&self) -> Vec<Transaction> {
         let _timer = self.latency.with_label_values(&["txs"]).start_timer();
@@ -296,7 +314,7 @@ impl Mempool {
 
     // Get n txs after the given txid in the mempool
     pub fn txs_page(&self, n: usize, start: Option<Txid>) -> Vec<Transaction> {
-        let _timer = self.latency.with_label_values(&["txs"]).start_timer();
+        let _timer = self.latency.with_label_values(&["txs_page"]).start_timer();
         let mut page = Vec::with_capacity(n);
         let start_bound = match start {
             Some(txid) => Excluded(txid),
