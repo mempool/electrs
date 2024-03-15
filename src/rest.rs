@@ -1056,7 +1056,7 @@ fn handle_request(
             }
 
             // XXX paging?
-            json_response(utxos, TTL_SHORT)
+            json_response(choose_list, TTL_SHORT)
         }
 
 
