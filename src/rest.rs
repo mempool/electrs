@@ -405,7 +405,7 @@ fn is_bare_multisig(script: &Script) -> bool {
         && script[0] <= script[len - 2]
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct UtxoValue {
     txid: Txid,
     vout: u32,
@@ -1014,6 +1014,52 @@ fn handle_request(
             // XXX paging?
             json_response(utxos, TTL_SHORT)
         }
+
+        (
+            &Method::POST,
+            Some(script_type @ &"address"),
+            Some(script_str),
+            Some(&"utxo_select"),
+            None,
+            None,
+        )
+        | (
+            &Method::POST,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"utxo_select"),
+            None,
+            None,
+        ) => {
+            let (amounts, min_amount, confirmed): (Vec<u64>, u64, bool) =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+            let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let mut utxos: Vec<UtxoValue> = query
+                .utxo(&script_hash[..])?
+                .into_iter()
+                .map(UtxoValue::from)
+                .collect();
+
+            utxos.retain(|utxo| {
+                utxo.value >= min_amount && utxo.status.confirmed == confirmed
+            });
+            utxos.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap());
+
+            let mut choose_list = Vec::new();
+            for target_amount in amounts {
+                let (mut part_choose_list, part_index) =
+                    select_utxos(&utxos, target_amount);
+                for (iter_index, selcet_index) in part_index.iter().enumerate() {
+                    utxos.remove(selcet_index - iter_index);
+                }
+                choose_list.append(&mut part_choose_list);
+            }
+
+            // XXX paging?
+            json_response(utxos, TTL_SHORT)
+        }
+
+
         (&Method::GET, Some(&"address-prefix"), Some(prefix), None, None, None) => {
             if !config.address_search {
                 return Err(HttpError::from("address search disabled".to_string()));
@@ -1691,6 +1737,68 @@ impl From<address::AddressError> for HttpError {
     fn from(e: address::AddressError) -> Self {
         HttpError::from(e.to_string())
     }
+}
+
+fn select_utxos(utxos: &[UtxoValue], target_value: u64) -> (Vec<UtxoValue>, Vec<usize>) {
+    let mut choose_list = Vec::new();
+    let mut choose_index = Vec::new();
+    if utxos.len() <= 3 {
+        for (index, utxo) in utxos.iter().enumerate() {
+            choose_list.push(utxo.clone());
+            choose_index.push(index);
+        }
+        return (choose_list, choose_index);
+    } else {
+        let utxo_len = utxos.len();
+        if let Some((index, _middle_utxo)) = utxos
+            .iter()
+            .enumerate()
+            .find(|utxo| utxo.1.value >= target_value)
+        {
+            let select_index = if index == 0 {
+                // first utxo is enough
+                vec![0, 1, 2]
+            } else if index == utxo_len - 1 {
+                // last utxo is enough
+                vec![0, utxo_len - 2, utxo_len - 1]
+            } else {
+                // find one middle utxo enough
+                if let Some((new_index, _new_utxo)) = utxos[index + 1..]
+                    .iter()
+                    .enumerate()
+                    .find(|utxo| utxo.1.status.block_height.unwrap_or_default() > 0)
+                {
+                    // find another confirmed big utxo
+                    vec![0, index, new_index + index + 1]
+                } else {
+                    // no confirmed bit utxo, select last one
+                    vec![0, index, utxo_len - 1]
+                }
+            };
+            for i in select_index {
+                choose_list.push(utxos[i].clone());
+                choose_index.push(i);
+            }
+        } else {
+            let mut total_amount = 0;
+            let max_len = std::cmp::min(utxo_len, 20);
+            // max inputs length is '20'
+            for i in 0..=max_len {
+                total_amount += utxos[utxo_len - 1 - i].value;
+                choose_index.push(utxo_len - 1 - i);
+                choose_list.push(utxos[utxo_len - 1 - i].clone());
+                if total_amount > target_value {
+                    break;
+                }
+            }
+            // push small utxo to make inputs length to 3
+            if choose_list.len() < 3 {
+                choose_list.push(utxos[0].clone());
+                choose_index.push(0);
+            }
+        };
+    }
+    (choose_list, choose_index)
 }
 
 #[cfg(test)]
