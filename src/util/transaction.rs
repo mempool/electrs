@@ -15,7 +15,7 @@ lazy_static! {
         Txid::from_hex("0c52d2526a5c9f00e9fb74afd15dd3caaf17c823159a514f929ae25193a43a52").unwrap();
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TransactionStatus {
     pub confirmed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
