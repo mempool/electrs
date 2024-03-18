@@ -2,6 +2,7 @@ use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
 use bitcoin::util::merkleblock::MerkleBlock;
 use bitcoin::VarInt;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -510,6 +511,100 @@ impl ChainQuery {
             &TxHistoryRow::filter(code, hash),
             &TxHistoryRow::prefix_end(code, hash),
         )
+    }
+
+    pub fn summary(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        // scripthash lookup
+        self._summary(b'H', scripthash, last_seen_txid, limit)
+    }
+
+    fn _summary(
+        &self,
+        code: u8,
+        hash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        let _timer_scan = self.start_timer("address_summary");
+        let rows = self
+            .history_iter_scan_reverse(code, hash)
+            .map(TxHistoryRow::from_row)
+            .map(|row| (row.get_txid(), row.key.txinfo))
+            .skip_while(|(txid, _)| {
+                // skip until we reach the last_seen_txid
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+            })
+            .skip_while(|(txid, _)| {
+                // skip the last_seen_txid itself
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid == txid)
+            })
+            .filter_map(|(txid, info)| {
+                self.tx_confirming_block(&txid)
+                    .map(|b| (txid, info, b.height, b.time))
+            });
+
+        // collate utxo funding/spending events by transaction
+        let mut map: IndexMap<Txid, TxHistorySummary> = IndexMap::new();
+        for (txid, info, height, time) in rows {
+            if !map.contains_key(&txid) && map.len() == limit {
+                break;
+            }
+            match info {
+                #[cfg(not(feature = "liquid"))]
+                TxHistoryInfo::Funding(info) => {
+                    map.entry(txid)
+                        .and_modify(|tx| {
+                            tx.value = tx.value.saturating_add(info.value.try_into().unwrap_or(0))
+                        })
+                        .or_insert(TxHistorySummary {
+                            txid,
+                            value: info.value.try_into().unwrap_or(0),
+                            height,
+                            time,
+                        });
+                }
+                #[cfg(not(feature = "liquid"))]
+                TxHistoryInfo::Spending(info) => {
+                    map.entry(txid)
+                        .and_modify(|tx| {
+                            tx.value = tx.value.saturating_sub(info.value.try_into().unwrap_or(0))
+                        })
+                        .or_insert(TxHistorySummary {
+                            txid,
+                            value: 0_i64.saturating_sub(info.value.try_into().unwrap_or(0)),
+                            height,
+                            time,
+                        });
+                }
+                #[cfg(feature = "liquid")]
+                TxHistoryInfo::Funding(_info) => {
+                    map.entry(txid).or_insert(TxHistorySummary {
+                        txid,
+                        value: 0,
+                        height,
+                        time,
+                    });
+                }
+                #[cfg(feature = "liquid")]
+                TxHistoryInfo::Spending(_info) => {
+                    map.entry(txid).or_insert(TxHistorySummary {
+                        txid,
+                        value: 0,
+                        height,
+                        time,
+                    });
+                }
+                #[cfg(feature = "liquid")]
+                _ => {}
+            }
+        }
+
+        map.into_values().collect()
     }
 
     pub fn history(
@@ -1571,6 +1666,14 @@ impl TxHistoryInfo {
             | TxHistoryInfo::Pegout(_) => unreachable!(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TxHistorySummary {
+    txid: Txid,
+    height: usize,
+    value: i64,
+    time: u32,
 }
 
 #[derive(Serialize, Deserialize)]

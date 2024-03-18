@@ -59,6 +59,7 @@ pub struct Config {
     pub rest_default_block_limit: usize,
     pub rest_default_chain_txs_per_page: usize,
     pub rest_default_max_mempool_txs: usize,
+    pub rest_default_max_address_summary_txs: usize,
     pub rest_max_mempool_page_size: usize,
     pub rest_max_mempool_txid_page_size: usize,
 
@@ -239,6 +240,12 @@ impl Config {
                     .long("rest-default-max-mempool-txs")
                     .help("The default number of mempool transactions returned by the txs endpoints.")
                     .default_value("50")
+            )
+            .arg(
+                Arg::with_name("rest_default_max_address_summary_txs")
+                    .long("rest-default-max-address-summary-txs")
+                    .help("The default number of transactions returned by the address summary endpoints.")
+                    .default_value("5000")
             )
             .arg(
                 Arg::with_name("rest_max_mempool_page_size")
@@ -503,6 +510,11 @@ impl Config {
             rest_default_max_mempool_txs: value_t_or_exit!(
                 m,
                 "rest_default_max_mempool_txs",
+                usize
+            ),
+            rest_default_max_address_summary_txs: value_t_or_exit!(
+                m,
+                "rest_default_max_address_summary_txs",
                 usize
             ),
             rest_max_mempool_page_size: value_t_or_exit!(m, "rest_max_mempool_page_size", usize),

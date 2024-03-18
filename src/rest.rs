@@ -22,7 +22,7 @@ use prometheus::{HistogramOpts, HistogramVec};
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
-use std::fs;
+use std::{cmp, fs};
 #[cfg(feature = "liquid")]
 use {
     crate::elements::{peg::PegoutValue, AssetSorting, IssuanceValue},
@@ -956,6 +956,38 @@ fn handle_request(
                 .collect();
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+        (
+            &Method::GET,
+            Some(script_type @ &"address"),
+            Some(script_str),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+        )
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+        ) => {
+            let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = cmp::max(
+                config.rest_default_max_address_summary_txs,
+                query_params
+                    .get("max_txs")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(config.rest_default_max_address_summary_txs),
+            );
+
+            let summary = query
+                .chain()
+                .summary(&script_hash[..], last_seen_txid.as_ref(), max_txs);
+
+            json_response(summary, TTL_SHORT)
         }
         (
             &Method::GET,
