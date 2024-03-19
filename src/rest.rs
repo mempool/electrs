@@ -975,7 +975,7 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
-            let max_txs = cmp::max(
+            let max_txs = cmp::min(
                 config.rest_default_max_address_summary_txs,
                 query_params
                     .get("max_txs")
