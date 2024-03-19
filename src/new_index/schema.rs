@@ -2,7 +2,6 @@ use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
 use bitcoin::util::merkleblock::MerkleBlock;
 use bitcoin::VarInt;
-use indexmap::IndexMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -549,7 +548,7 @@ impl ChainQuery {
             });
 
         // collate utxo funding/spending events by transaction
-        let mut map: IndexMap<Txid, TxHistorySummary> = IndexMap::new();
+        let mut map: HashMap<Txid, TxHistorySummary> = HashMap::new();
         for (txid, info, height, time) in rows {
             if !map.contains_key(&txid) && map.len() == limit {
                 break;
@@ -604,7 +603,15 @@ impl ChainQuery {
             }
         }
 
-        map.into_values().collect()
+        let mut tx_summaries = map.into_values().collect::<Vec<TxHistorySummary>>();
+        tx_summaries.sort_by(|a, b| {
+            if a.height == b.height {
+                a.value.cmp(&b.value)
+            } else {
+                b.height.cmp(&a.height)
+            }
+        });
+        tx_summaries
     }
 
     pub fn history(
