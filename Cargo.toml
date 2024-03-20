@@ -21,8 +21,8 @@ name = "electrs"
 
 [features]
 default = []
-liquid = [ "elements" ]
-electrum-discovery = [ "electrum-client"]
+liquid = ["elements"]
+electrum-discovery = ["electrum-client"]
 
 [dependencies]
 arrayref = "0.3.6"
