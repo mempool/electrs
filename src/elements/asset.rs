@@ -71,9 +71,9 @@ pub struct IssuedAsset {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetRow {
     pub issuance_txid: FullHash,
-    pub issuance_vin: u16,
+    pub issuance_vin: u32,
     pub prev_txid: FullHash,
-    pub prev_vout: u16,
+    pub prev_vout: u32,
     pub issuance: Bytes, // bincode does not like dealing with AssetIssuance, deserialization fails with "invalid type: sequence, expected a struct"
     pub reissuance_token: FullHash,
 }
@@ -105,7 +105,7 @@ impl IssuedAsset {
             },
             issuance_prevout: OutPoint {
                 txid: deserialize(&asset.prev_txid).unwrap(),
-                vout: asset.prev_vout as u32,
+                vout: asset.prev_vout,
             },
             contract_hash,
             reissuance_token,
@@ -155,7 +155,7 @@ impl LiquidAsset {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct IssuingInfo {
     pub txid: FullHash,
-    pub vin: u16,
+    pub vin: u32,
     pub is_reissuance: bool,
     // None for blinded issuances
     pub issued_amount: Option<u64>,
@@ -166,7 +166,7 @@ pub struct IssuingInfo {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct BurningInfo {
     pub txid: FullHash,
-    pub vout: u16,
+    pub vout: u32,
     pub value: u64,
 }
 
@@ -251,7 +251,7 @@ fn index_tx_assets(
                 pegout.asset.explicit().unwrap(),
                 TxHistoryInfo::Pegout(PegoutInfo {
                     txid,
-                    vout: txo_index as u16,
+                    vout: txo_index as u32,
                     value: pegout.value,
                 }),
             ));
@@ -262,7 +262,7 @@ fn index_tx_assets(
                         asset_id,
                         TxHistoryInfo::Burning(BurningInfo {
                             txid,
-                            vout: txo_index as u16,
+                            vout: txo_index as u32,
                             value,
                         }),
                     ));
@@ -277,7 +277,7 @@ fn index_tx_assets(
                 pegin.asset.explicit().unwrap(),
                 TxHistoryInfo::Pegin(PeginInfo {
                     txid,
-                    vin: txi_index as u16,
+                    vin: txi_index as u32,
                     value: pegin.value,
                 }),
             ));
@@ -302,7 +302,7 @@ fn index_tx_assets(
                 asset_id,
                 TxHistoryInfo::Issuing(IssuingInfo {
                     txid,
-                    vin: txi_index as u16,
+                    vin: txi_index as u32,
                     is_reissuance,
                     issued_amount,
                     token_amount,
@@ -319,9 +319,9 @@ fn index_tx_assets(
                     asset_id,
                     AssetRow {
                         issuance_txid: txid,
-                        issuance_vin: txi_index as u16,
+                        issuance_vin: txi_index as u32,
                         prev_txid: full_hash(&txi.previous_output.txid[..]),
-                        prev_vout: txi.previous_output.vout as u16,
+                        prev_vout: txi.previous_output.vout,
                         issuance: serialize(&txi.asset_issuance),
                         reissuance_token: full_hash(&reissuance_token.into_inner()[..]),
                     },
