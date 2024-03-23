@@ -1202,6 +1202,18 @@ fn handle_request(
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
         }
+        (&Method::POST, Some(&"txs"), Some(&"test"), None, None, None) => {
+            let txhexes: Vec<String> = String::from_utf8(body.to_vec())?
+                .split(',')
+                .map(|s| s.to_string())
+                .collect();
+
+            let result = query
+                .test_mempool_accept(txhexes)
+                .map_err(|err| HttpError::from(err.description().to_string()))?;
+
+            json_response(result, TTL_SHORT)
+        }
         (&Method::GET, Some(&"txs"), Some(&"outspends"), None, None, None) => {
             let txid_strings: Vec<&str> = query_params
                 .get("txids")
