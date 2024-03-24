@@ -1215,6 +1215,19 @@ fn handle_request(
                 })
                 .transpose()?;
 
+            // pre-checks
+            txhexes.iter().try_for_each(|txhex| {
+                // each transaction must be of reasonable size (more than 60 bytes, within 400kWU standardness limit)
+                if !(120..800_000).contains(&txhex.len()) {
+                    Result::Err(HttpError::from("Invalid transaction size".to_string()))
+                } else {
+                    // must be a valid hex string
+                    Vec::<u8>::from_hex(txhex)
+                        .map_err(|_| HttpError::from("Invalid transaction hex".to_string()))
+                        .map(|_| ())
+                }
+            })?;
+
             let result = query
                 .test_mempool_accept(txhexes, maxfeerate)
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
