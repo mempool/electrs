@@ -1207,9 +1207,16 @@ fn handle_request(
                 .split(',')
                 .map(|s| s.to_string())
                 .collect();
+            let maxfeerate = query_params
+                .get("maxfeerate")
+                .map(|s| {
+                    s.parse::<f32>()
+                        .map_err(|_| HttpError::from("Invalid maxfeerate".to_string()))
+                })
+                .transpose()?;
 
             let result = query
-                .test_mempool_accept(txhexes)
+                .test_mempool_accept(txhexes, maxfeerate)
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
 
             json_response(result, TTL_SHORT)

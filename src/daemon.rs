@@ -602,8 +602,16 @@ impl Daemon {
             .chain_err(|| "failed to parse txid")
     }
 
-    pub fn test_mempool_accept(&self, txhex: Vec<String>) -> Result<Vec<MempoolAcceptResult>> {
-        let result = self.request("testmempoolaccept", json!([txhex]))?;
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f32>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        let params = match maxfeerate {
+            Some(rate) => json!([txhex, format!("{:.8}", rate)]),
+            None => json!([txhex]),
+        };
+        let result = self.request("testmempoolaccept", params)?;
         serde_json::from_value::<Vec<MempoolAcceptResult>>(result)
             .chain_err(|| "invalid testmempoolaccept reply")
     }

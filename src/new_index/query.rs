@@ -87,8 +87,12 @@ impl Query {
         Ok(txid)
     }
 
-    pub fn test_mempool_accept(&self, txhex: Vec<String>) -> Result<Vec<MempoolAcceptResult>> {
-        self.daemon.test_mempool_accept(txhex)
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f32>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        self.daemon.test_mempool_accept(txhex, maxfeerate)
     }
 
     pub fn utxo(&self, scripthash: &[u8]) -> Result<Vec<Utxo>> {
