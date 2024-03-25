@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::chain::{Network, OutPoint, Transaction, TxOut, Txid};
 use crate::config::Config;
-use crate::daemon::Daemon;
+use crate::daemon::{Daemon, MempoolAcceptResult};
 use crate::errors::*;
 use crate::new_index::{ChainQuery, Mempool, ScriptStats, SpendingInput, Utxo};
 use crate::util::{is_spendable, BlockId, Bytes, TransactionStatus};
@@ -85,6 +85,14 @@ impl Query {
             );
         }
         Ok(txid)
+    }
+
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f64>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        self.daemon.test_mempool_accept(txhex, maxfeerate)
     }
 
     pub fn utxo(&self, scripthash: &[u8]) -> Result<Vec<Utxo>> {
