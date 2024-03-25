@@ -605,7 +605,7 @@ impl Daemon {
     pub fn test_mempool_accept(
         &self,
         txhex: Vec<String>,
-        maxfeerate: Option<f32>,
+        maxfeerate: Option<f64>,
     ) -> Result<Vec<MempoolAcceptResult>> {
         let params = match maxfeerate {
             Some(rate) => json!([txhex, format!("{:.8}", rate)]),

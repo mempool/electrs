@@ -90,7 +90,7 @@ impl Query {
     pub fn test_mempool_accept(
         &self,
         txhex: Vec<String>,
-        maxfeerate: Option<f32>,
+        maxfeerate: Option<f64>,
     ) -> Result<Vec<MempoolAcceptResult>> {
         self.daemon.test_mempool_accept(txhex, maxfeerate)
     }

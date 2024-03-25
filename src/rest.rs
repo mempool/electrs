@@ -1215,7 +1215,7 @@ fn handle_request(
             let maxfeerate = query_params
                 .get("maxfeerate")
                 .map(|s| {
-                    s.parse::<f32>()
+                    s.parse::<f64>()
                         .map_err(|_| HttpError::from("Invalid maxfeerate".to_string()))
                 })
                 .transpose()?;
