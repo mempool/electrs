@@ -925,6 +925,80 @@ fn handle_request(
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
+        (&Method::GET, Some(script_types @ &"addresses"), Some(&"txs"), None, None, None)
+        | (&Method::GET, Some(script_types @ &"scripthashes"), Some(&"txs"), None, None, None) => {
+            let script_type = match *script_types {
+                "addresses" => "address",
+                "scripthashes" => "scripthash",
+                _ => "",
+            };
+            let script_hashes: Vec<[u8; 32]> = query_params
+                .get(&script_types.to_string())
+                .ok_or(HttpError::from(format!("No {} specified", script_types)))?
+                .as_str()
+                .split(',')
+                .map(|script_str| to_scripthash(script_type, script_str, config.network_type))
+                .filter_map(|s| s.ok())
+                .collect();
+
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(config.rest_default_max_mempool_txs);
+            let after_txid = query_params
+                .get("after_txid")
+                .and_then(|s| s.parse::<Txid>().ok());
+
+            let mut txs = vec![];
+
+            if let Some(given_txid) = &after_txid {
+                let is_mempool = query
+                    .mempool()
+                    .history_txids_iter_group(script_hashes.clone())
+                    .any(|txid| given_txid == &txid);
+                let is_confirmed = if is_mempool {
+                    false
+                } else {
+                    query
+                        .chain()
+                        .history_txids_iter_group(script_hashes.clone())
+                        .any(|txid| given_txid == &txid)
+                };
+                if !is_mempool && !is_confirmed {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+            }
+            txs.extend(
+                query
+                    .mempool()
+                    .history_group(script_hashes.clone(), after_txid.as_ref(), max_txs)
+                    .into_iter()
+                    .map(|tx| (tx, None)),
+            );
+
+            if txs.len() < max_txs {
+                let after_txid_ref = if !txs.is_empty() {
+                    // If there are any txs, we know mempool found the
+                    // after_txid IF it exists... so always return None.
+                    None
+                } else {
+                    after_txid.as_ref()
+                };
+                txs.extend(
+                    query
+                        .chain()
+                        .history_group(script_hashes, after_txid_ref, max_txs - txs.len())
+                        .into_iter()
+                        .map(|(tx, blockid)| (tx, Some(blockid))),
+                );
+            }
+
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+
         (
             &Method::GET,
             Some(script_type @ &"address"),
@@ -986,6 +1060,52 @@ fn handle_request(
             let summary = query
                 .chain()
                 .summary(&script_hash[..], last_seen_txid.as_ref(), max_txs);
+
+            json_response(summary, TTL_SHORT)
+        }
+        (
+            &Method::GET,
+            Some(script_types @ &"addresses"),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+            None,
+        )
+        | (
+            &Method::GET,
+            Some(script_types @ &"scripthashes"),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+            None,
+        ) => {
+            let script_type = match *script_types {
+                "addresses" => "address",
+                "scripthashes" => "scripthash",
+                _ => "",
+            };
+            let script_hashes: Vec<[u8; 32]> = query_params
+                .get(&script_types.to_string())
+                .ok_or(HttpError::from(format!("No {} specified", script_types)))?
+                .as_str()
+                .split(',')
+                .map(|script_str| to_scripthash(script_type, script_str, config.network_type))
+                .filter_map(|s| s.ok())
+                .collect();
+
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = cmp::min(
+                config.rest_default_max_address_summary_txs,
+                query_params
+                    .get("max_txs")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(config.rest_default_max_address_summary_txs),
+            );
+
+            let summary =
+                query
+                    .chain()
+                    .summary_group(script_hashes, last_seen_txid.as_ref(), max_txs);
 
             json_response(summary, TTL_SHORT)
         }

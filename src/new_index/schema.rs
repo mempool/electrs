@@ -37,6 +37,8 @@ use crate::new_index::fetch::{start_fetcher, BlockEntry, FetchFrom};
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
 
+use super::db::ReverseScanGroupIterator;
+
 const MIN_HISTORY_ITEMS_TO_CACHE: usize = 100;
 
 pub struct Store {
@@ -511,28 +513,33 @@ impl ChainQuery {
             &TxHistoryRow::prefix_end(code, hash),
         )
     }
-
-    pub fn summary(
-        &self,
-        scripthash: &[u8],
-        last_seen_txid: Option<&Txid>,
-        limit: usize,
-    ) -> Vec<TxHistorySummary> {
-        // scripthash lookup
-        self._summary(b'H', scripthash, last_seen_txid, limit)
-    }
-
-    fn _summary(
+    fn history_iter_scan_group_reverse(
         &self,
         code: u8,
-        hash: &[u8],
+        hashes: Vec<[u8; 32]>,
+    ) -> ReverseScanGroupIterator {
+        self.store.history_db.iter_scan_group_reverse(
+            hashes
+                .into_iter()
+                .map(|hash| {
+                    let prefix = TxHistoryRow::filter(code, &hash[..]);
+                    let prefix_max = TxHistoryRow::prefix_end(code, &hash[..]);
+                    (prefix, prefix_max)
+                })
+                .collect(),
+            33,
+        )
+    }
+
+    fn collate_summaries(
+        &self,
+        iter: impl Iterator<Item = TxHistoryRow>,
         last_seen_txid: Option<&Txid>,
         limit: usize,
     ) -> Vec<TxHistorySummary> {
-        let _timer_scan = self.start_timer("address_summary");
-        let rows = self
-            .history_iter_scan_reverse(code, hash)
-            .map(TxHistoryRow::from_row)
+        // collate utxo funding/spending events by transaction
+
+        let rows = iter
             .map(|row| (row.get_txid(), row.key.txinfo))
             .skip_while(|(txid, _)| {
                 // skip until we reach the last_seen_txid
@@ -546,8 +553,6 @@ impl ChainQuery {
                 self.tx_confirming_block(&txid)
                     .map(|b| (txid, info, b.height, b.time))
             });
-
-        // collate utxo funding/spending events by transaction
         let mut map: HashMap<Txid, TxHistorySummary> = HashMap::new();
         for (txid, info, height, time) in rows {
             if !map.contains_key(&txid) && map.len() == limit {
@@ -602,7 +607,6 @@ impl ChainQuery {
                 _ => {}
             }
         }
-
         let mut tx_summaries = map.into_values().collect::<Vec<TxHistorySummary>>();
         tx_summaries.sort_by(|a, b| {
             if a.height == b.height {
@@ -612,6 +616,46 @@ impl ChainQuery {
             }
         });
         tx_summaries
+    }
+
+    pub fn summary(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        // scripthash lookup
+        self._summary(b'H', scripthash, last_seen_txid, limit)
+    }
+
+    fn _summary(
+        &self,
+        code: u8,
+        hash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        let _timer_scan = self.start_timer("address_summary");
+        let rows = self
+            .history_iter_scan_reverse(code, hash)
+            .map(TxHistoryRow::from_row);
+
+        self.collate_summaries(rows, last_seen_txid, limit)
+    }
+
+    pub fn summary_group(
+        &self,
+        scripthashes: Vec<[u8; 32]>,
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        // scripthash lookup
+        let _timer_scan = self.start_timer("address_group_summary");
+        let rows = self
+            .history_iter_scan_group_reverse(b'H', scripthashes)
+            .map(TxHistoryRow::from_row);
+
+        self.collate_summaries(rows, last_seen_txid, limit)
     }
 
     pub fn history(
@@ -676,6 +720,60 @@ impl ChainQuery {
             .unique()
             .filter_map(|txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
             .take(limit)
+            .collect()
+    }
+
+    pub fn history_group(
+        &self,
+        scripthashes: Vec<[u8; 32]>,
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<(Transaction, BlockId)> {
+        // scripthash lookup
+        self._history_group(b'H', scripthashes, last_seen_txid, limit)
+    }
+
+    pub fn history_txids_iter_group(
+        &self,
+        scripthashes: Vec<[u8; 32]>,
+    ) -> impl Iterator<Item = Txid> + '_ {
+        self.history_iter_scan_group_reverse(b'H', scripthashes)
+            .map(|row| TxHistoryRow::from_row(row).get_txid())
+            .unique()
+    }
+
+    fn _history_group(
+        &self,
+        code: u8,
+        hashes: Vec<[u8; 32]>,
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<(Transaction, BlockId)> {
+        print!("limit {} | last_seen {:?}", limit, last_seen_txid);
+        let _timer_scan = self.start_timer("history_group");
+        let txs_conf = self
+            .history_iter_scan_group_reverse(code, hashes)
+            .map(|row| TxHistoryRow::from_row(row).get_txid())
+            // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
+            .unique()
+            // TODO seek directly to last seen tx without reading earlier rows
+            .skip_while(|txid| {
+                // skip until we reach the last_seen_txid
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+            })
+            .skip(match last_seen_txid {
+                Some(_) => 1, // skip the last_seen_txid itself
+                None => 0,
+            })
+            .filter_map(|txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
+            .take(limit)
+            .collect::<Vec<(Txid, BlockId)>>();
+
+        self.lookup_txns(&txs_conf)
+            .expect("failed looking up txs in history index")
+            .into_iter()
+            .zip(txs_conf)
+            .map(|(tx, (_, blockid))| (tx, blockid))
             .collect()
     }
 

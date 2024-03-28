@@ -69,6 +69,69 @@ impl<'a> Iterator for ReverseScanIterator<'a> {
     }
 }
 
+pub struct ReverseScanGroupIterator<'a> {
+    iters: Vec<ReverseScanIterator<'a>>,
+    next_rows: Vec<Option<DBRow>>,
+    value_offset: usize,
+    done: bool,
+}
+
+impl<'a> ReverseScanGroupIterator<'a> {
+    pub fn new(
+        iters: Vec<ReverseScanIterator<'a>>,
+        value_offset: usize,
+    ) -> ReverseScanGroupIterator {
+        let mut next_rows: Vec<Option<DBRow>> = Vec::new();
+        let mut new_iters: Vec<ReverseScanIterator<'a>> = Vec::new();
+        for mut iter in iters {
+            let next = iter.next();
+            next_rows.push(next);
+            new_iters.push(iter);
+        }
+        let done = next_rows.iter().all(|row| row.is_none());
+        ReverseScanGroupIterator {
+            iters: new_iters,
+            next_rows,
+            value_offset,
+            done,
+        }
+    }
+}
+
+impl<'a> Iterator for ReverseScanGroupIterator<'a> {
+    type Item = DBRow;
+
+    fn next(&mut self) -> Option<DBRow> {
+        if self.done {
+            return None;
+        }
+
+        let best_index = self
+            .next_rows
+            .iter()
+            .enumerate()
+            .max_by(|(a_index, a_opt), (b_index, b_opt)| match (a_opt, b_opt) {
+                (None, None) => a_index.cmp(b_index),
+
+                (Some(_), None) => std::cmp::Ordering::Greater,
+
+                (None, Some(_)) => std::cmp::Ordering::Less,
+
+                (Some(a), Some(b)) => a.key[self.value_offset..].cmp(&(b.key[self.value_offset..])),
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+
+        let best = self.next_rows[best_index].take();
+        self.next_rows[best_index] = self.iters.get_mut(best_index)?.next();
+        if self.next_rows.iter().all(|row| row.is_none()) {
+            self.done = true;
+        }
+
+        best
+    }
+}
+
 #[derive(Debug)]
 pub struct DB {
     db: rocksdb::DB,
@@ -134,6 +197,26 @@ impl DB {
             iter,
             done: false,
         }
+    }
+
+    pub fn iter_scan_group_reverse(
+        &self,
+        prefixes: Vec<(Vec<u8>, Vec<u8>)>,
+        value_offset: usize,
+    ) -> ReverseScanGroupIterator {
+        let iters = prefixes
+            .iter()
+            .map(|(prefix, prefix_max)| {
+                let mut iter = self.db.raw_iterator();
+                iter.seek_for_prev(prefix_max);
+                ReverseScanIterator {
+                    prefix: prefix.to_vec(),
+                    iter,
+                    done: false,
+                }
+            })
+            .collect();
+        ReverseScanGroupIterator::new(iters, value_offset)
     }
 
     pub fn write(&self, mut rows: Vec<DBRow>, flush: DBFlush) {
