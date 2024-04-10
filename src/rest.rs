@@ -516,10 +516,20 @@ impl From<SpendingInput> for SpendingValue {
     }
 }
 
+#[inline]
+fn ttl_long(config: &Config) -> u32 {
+    // Regtest networks change often, so they should always have short TTL
+    if config.network_type.is_regtest() {
+        config.mempool_rest_ttl_short
+    } else {
+        config.mempool_rest_ttl_long
+    }
+}
+
 fn ttl_by_depth(height: Option<usize>, query: &Query, config: &Config) -> u32 {
     height.map_or(config.mempool_rest_ttl_short, |height| {
         if query.chain().best_height() - height >= CONF_FINAL {
-            config.mempool_rest_ttl_long
+            ttl_long(config)
         } else {
             config.mempool_rest_ttl_short
         }
@@ -727,7 +737,7 @@ fn handle_request(
                 .get_block_with_meta(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             let block_value = BlockValue::new(blockhm);
-            json_response(block_value, config.mempool_rest_ttl_long)
+            json_response(block_value, ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -741,7 +751,7 @@ fn handle_request(
                 .chain()
                 .get_block_txids(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
-            json_response(txids, config.mempool_rest_ttl_long)
+            json_response(txids, ttl_long(config))
         }
         (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -765,7 +775,7 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
 
             let header_hex = hex::encode(encode::serialize(&header));
-            http_message(StatusCode::OK, header_hex, config.mempool_rest_ttl_long)
+            http_message(StatusCode::OK, header_hex, ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"raw"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -779,7 +789,7 @@ fn handle_request(
                 .header("Content-Type", "application/octet-stream")
                 .header(
                     "Cache-Control",
-                    format!("public, max-age={:}", config.mempool_rest_ttl_long),
+                    format!("public, max-age={:}", ttl_long(config)),
                 )
                 .header("X-Powered-By", &**VERSION_STRING)
                 .body(Body::from(raw))
@@ -795,11 +805,7 @@ fn handle_request(
             if index >= txids.len() {
                 bail!(HttpError::not_found("tx index out of range".to_string()));
             }
-            http_message(
-                StatusCode::OK,
-                txids[index].to_hex(),
-                config.mempool_rest_ttl_long,
-            )
+            http_message(StatusCode::OK, txids[index].to_hex(), ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), start_index, None) => {
             let hash = BlockHash::from_hex(hash)?;
