@@ -55,6 +55,8 @@ pub struct Config {
     pub electrum_txs_limit: usize,
     pub electrum_banner: String,
     pub mempool_backlog_stats_ttl: u64,
+    pub mempool_rest_ttl_short: u32,
+    pub mempool_rest_ttl_long: u32,
     pub mempool_recent_txs_size: usize,
     pub rest_default_block_limit: usize,
     pub rest_default_chain_txs_per_page: usize,
@@ -216,6 +218,18 @@ impl Config {
                     .long("mempool-backlog-stats-ttl")
                     .help("The number of seconds that need to pass before Mempool::update will update the latency histogram again.")
                     .default_value("10")
+            )
+            .arg(
+                Arg::with_name("mempool_rest_ttl_short")
+                    .long("mempool-rest-ttl-short")
+                    .help("The number of seconds frequently updated items in the REST API should be cached.")
+                    .default_value("10")
+            )
+            .arg(
+                Arg::with_name("mempool_rest_ttl_long")
+                    .long("mempool-rest-ttl-long")
+                    .help("The number of seconds infrequently updated items in the REST API should be cached.")
+                    .default_value("157784630")
             )
             .arg(
                 Arg::with_name("mempool_recent_txs_size")
@@ -500,6 +514,8 @@ impl Config {
             rpc_socket_file,
             monitoring_addr,
             mempool_backlog_stats_ttl: value_t_or_exit!(m, "mempool_backlog_stats_ttl", u64),
+            mempool_rest_ttl_short: value_t_or_exit!(m, "mempool_rest_ttl_short", u32),
+            mempool_rest_ttl_long: value_t_or_exit!(m, "mempool_rest_ttl_long", u32),
             mempool_recent_txs_size: value_t_or_exit!(m, "mempool_recent_txs_size", usize),
             rest_default_block_limit: value_t_or_exit!(m, "rest_default_block_limit", usize),
             rest_default_chain_txs_per_page: value_t_or_exit!(
