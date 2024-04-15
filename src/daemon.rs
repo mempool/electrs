@@ -117,6 +117,26 @@ struct NetworkInfo {
     relayfee: f64, // in BTC/kB
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct MempoolFees {
+    base: f64,
+    #[serde(rename = "effective-feerate")]
+    effective_feerate: f64,
+    #[serde(rename = "effective-includes")]
+    effective_includes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolAcceptResult {
+    txid: String,
+    wtxid: String,
+    allowed: Option<bool>,
+    vsize: Option<u32>,
+    fees: Option<MempoolFees>,
+    #[serde(rename = "reject-reason")]
+    reject_reason: Option<String>,
+}
+
 pub trait CookieGetter: Send + Sync {
     fn get(&self) -> Result<Vec<u8>>;
 }
@@ -580,6 +600,20 @@ impl Daemon {
         let txid = self.request("sendrawtransaction", json!([txhex]))?;
         Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
             .chain_err(|| "failed to parse txid")
+    }
+
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f64>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        let params = match maxfeerate {
+            Some(rate) => json!([txhex, format!("{:.8}", rate)]),
+            None => json!([txhex]),
+        };
+        let result = self.request("testmempoolaccept", params)?;
+        serde_json::from_value::<Vec<MempoolAcceptResult>>(result)
+            .chain_err(|| "invalid testmempoolaccept reply")
     }
 
     // Get estimated feerates for the provided confirmation targets using a batch RPC request
