@@ -93,6 +93,10 @@ do
 		ELECTRUM_TXS_LIMIT=9000
 		MAIN_LOOP_DELAY=14000
 	fi
+	if [ "${LOCATION}" = "fmt" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
 
 	# Run the popular address txt file generator before each run
 	POPULAR_SCRIPTS_FOLDER="${HOME}/popular-scripts/${NETWORK}"
