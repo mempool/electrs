@@ -341,10 +341,10 @@ impl Daemon {
             let mempool = daemon.getmempoolinfo()?;
 
             let ibd_done = if network.is_regtest() {
-                info.blocks == 0 && info.headers == 0
+                info.blocks == info.headers
             } else {
-                false
-            } || !info.initialblockdownload.unwrap_or(false);
+                !info.initialblockdownload.unwrap_or(false)
+            };
 
             if mempool.loaded && ibd_done && info.blocks == info.headers {
                 break;
