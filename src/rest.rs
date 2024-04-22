@@ -1796,6 +1796,9 @@ fn select_utxos(utxos: &[UtxoValue], target_value: u64) -> (Vec<UtxoValue>, Vec<
                 choose_list.push(utxos[0].clone());
                 choose_index.push(0);
             }
+            // re-order seq
+            choose_index.reverse();
+            choose_list.reverse();
         };
     }
     (choose_list, choose_index)
@@ -1803,9 +1806,10 @@ fn select_utxos(utxos: &[UtxoValue], target_value: u64) -> (Vec<UtxoValue>, Vec<
 
 #[cfg(test)]
 mod tests {
-    use crate::rest::HttpError;
+    use crate::rest::{HttpError, select_utxos, UtxoValue};
     use serde_json::Value;
     use std::collections::HashMap;
+    use crate::util::TransactionStatus;
 
     #[test]
     fn test_parse_query_param() {
@@ -1991,5 +1995,34 @@ mod tests {
                 hash, result, core_difficulty,
             );
         }
+    }
+
+    #[test]
+    fn test_select_utxos() {
+        let default_value = UtxoValue {
+            txid: Default::default(),
+            vout: 0,
+            status: TransactionStatus {
+                confirmed: false,
+                block_height: None,
+                block_hash: None,
+                block_time: None
+            },
+            value: 0,
+        };
+        let mut utxos = [default_value.clone(), default_value.clone(), default_value.clone(), default_value.clone(), default_value].to_vec();
+        utxos[0].value = 1000;
+        utxos[1].value = 1000;
+        utxos[2].value = 1000;
+        utxos[3].value = 10000;
+        utxos[4].value = 13200;
+
+        let res = select_utxos(&utxos, 17000);
+        println!("utxos: {:?}", serde_json::to_string(&res.0).unwrap());
+        for (iter_index, selcet_index) in res.1.iter().enumerate() {
+            println!("iter_index: {iter_index}, selcet_index: {selcet_index}");
+            utxos.remove(selcet_index - iter_index);
+        }
+        println!("remain utxos: {:?}", serde_json::to_string(&utxos).unwrap());
     }
 }
