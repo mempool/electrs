@@ -439,8 +439,12 @@ impl Mempool {
         // Phase 1: add to txstore
         for tx in txs {
             let txid = tx.txid();
-            txids.push(txid);
-            self.txstore.insert(txid, tx);
+            // Only push if it doesn't already exist.
+            // This is important now that update doesn't lock during
+            // the entire function body.
+            if self.txstore.insert(txid, tx).is_none() {
+                txids.push(txid);
+            }
         }
 
         // Phase 2: index history and spend edges (some txos can be missing)
