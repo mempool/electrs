@@ -32,6 +32,8 @@ pub enum Network {
     #[cfg(not(feature = "liquid"))]
     Testnet,
     #[cfg(not(feature = "liquid"))]
+    Testnet4,
+    #[cfg(not(feature = "liquid"))]
     Regtest,
     #[cfg(not(feature = "liquid"))]
     Signet,
@@ -135,6 +137,8 @@ pub fn bitcoin_genesis_hash(network: BNetwork) -> bitcoin::BlockHash {
             genesis_block(BNetwork::Bitcoin).block_hash();
         static ref TESTNET_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Testnet).block_hash();
+        static ref TESTNET4_GENESIS: bitcoin::BlockHash =
+            genesis_block(BNetwork::Testnet4).block_hash();
         static ref REGTEST_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Regtest).block_hash();
         static ref SIGNET_GENESIS: bitcoin::BlockHash =
@@ -143,6 +147,7 @@ pub fn bitcoin_genesis_hash(network: BNetwork) -> bitcoin::BlockHash {
     match network {
         BNetwork::Bitcoin => *BITCOIN_GENESIS,
         BNetwork::Testnet => *TESTNET_GENESIS,
+        BNetwork::Testnet4 => *TESTNET4_GENESIS,
         BNetwork::Regtest => *REGTEST_GENESIS,
         BNetwork::Signet => *SIGNET_GENESIS,
     }
@@ -174,6 +179,8 @@ impl From<&str> for Network {
             #[cfg(not(feature = "liquid"))]
             "testnet" => Network::Testnet,
             #[cfg(not(feature = "liquid"))]
+            "testnet4" => Network::Testnet4,
+            #[cfg(not(feature = "liquid"))]
             "regtest" => Network::Regtest,
             #[cfg(not(feature = "liquid"))]
             "signet" => Network::Signet,
@@ -196,6 +203,7 @@ impl From<Network> for BNetwork {
         match network {
             Network::Bitcoin => BNetwork::Bitcoin,
             Network::Testnet => BNetwork::Testnet,
+            Network::Testnet4 => BNetwork::Testnet4,
             Network::Regtest => BNetwork::Regtest,
             Network::Signet => BNetwork::Signet,
         }
@@ -208,6 +216,7 @@ impl From<BNetwork> for Network {
         match network {
             BNetwork::Bitcoin => Network::Bitcoin,
             BNetwork::Testnet => Network::Testnet,
+            BNetwork::Testnet4 => Network::Testnet4,
             BNetwork::Regtest => Network::Regtest,
             BNetwork::Signet => Network::Signet,
         }

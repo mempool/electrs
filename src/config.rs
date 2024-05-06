@@ -353,6 +353,8 @@ impl Config {
             Network::Regtest => 18443,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 38332,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 48332,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 7041,
@@ -364,6 +366,8 @@ impl Config {
             Network::Bitcoin => 50001,
             #[cfg(not(feature = "liquid"))]
             Network::Testnet => 60001,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 40001,
             #[cfg(not(feature = "liquid"))]
             Network::Regtest => 60401,
             #[cfg(not(feature = "liquid"))]
@@ -385,6 +389,8 @@ impl Config {
             Network::Regtest => 3002,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 3003,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 3004,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 3000,
@@ -400,6 +406,8 @@ impl Config {
             Network::Testnet => 14224,
             #[cfg(not(feature = "liquid"))]
             Network::Regtest => 24224,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 44224,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 54224,
 
@@ -448,6 +456,8 @@ impl Config {
             Network::Bitcoin => (),
             #[cfg(not(feature = "liquid"))]
             Network::Testnet => daemon_dir.push("testnet3"),
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => daemon_dir.push("testnet4"),
             #[cfg(not(feature = "liquid"))]
             Network::Regtest => daemon_dir.push("regtest"),
             #[cfg(not(feature = "liquid"))]
