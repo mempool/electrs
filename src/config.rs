@@ -33,6 +33,7 @@ pub struct Config {
     // See below for the documentation of each field:
     pub log: stderrlog::StdErrLog,
     pub network_type: Network,
+    pub magic: Option<u32>,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
     pub blocks_dir: PathBuf,
@@ -135,6 +136,11 @@ impl Config {
                 Arg::with_name("network")
                     .long("network")
                     .help(&network_help)
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("magic")
+                    .long("magic")
                     .takes_value(true),
             )
             .arg(
@@ -328,6 +334,9 @@ impl Config {
 
         let network_name = m.value_of("network").unwrap_or("mainnet");
         let network_type = Network::from(network_name);
+        let magic: Option<u32> = m
+            .value_of("magic")
+            .map(|s| u32::from_str_radix(s, 16).expect("invalid network magic"));
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
         let db_path = db_dir.join(network_name);
 
@@ -496,6 +505,7 @@ impl Config {
         let config = Config {
             log,
             network_type,
+            magic,
             db_path,
             daemon_dir,
             blocks_dir,
