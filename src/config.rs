@@ -33,6 +33,7 @@ pub struct Config {
     // See below for the documentation of each field:
     pub log: stderrlog::StdErrLog,
     pub network_type: Network,
+    pub magic: Option<u32>,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
     pub blocks_dir: PathBuf,
@@ -135,6 +136,12 @@ impl Config {
                 Arg::with_name("network")
                     .long("network")
                     .help(&network_help)
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("magic")
+                    .long("magic")
+                    .default_value("")
                     .takes_value(true),
             )
             .arg(
@@ -328,6 +335,10 @@ impl Config {
 
         let network_name = m.value_of("network").unwrap_or("mainnet");
         let network_type = Network::from(network_name);
+        let magic: Option<u32> = m
+            .value_of("magic")
+            .filter(|s| !s.is_empty())
+            .map(|s| u32::from_str_radix(s, 16).expect("invalid network magic"));
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
         let db_path = db_dir.join(network_name);
 
@@ -353,6 +364,8 @@ impl Config {
             Network::Regtest => 18443,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 38332,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 48332,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 7041,
@@ -364,6 +377,8 @@ impl Config {
             Network::Bitcoin => 50001,
             #[cfg(not(feature = "liquid"))]
             Network::Testnet => 60001,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 40001,
             #[cfg(not(feature = "liquid"))]
             Network::Regtest => 60401,
             #[cfg(not(feature = "liquid"))]
@@ -385,6 +400,8 @@ impl Config {
             Network::Regtest => 3002,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 3003,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 3004,
 
             #[cfg(feature = "liquid")]
             Network::Liquid => 3000,
@@ -400,6 +417,8 @@ impl Config {
             Network::Testnet => 14224,
             #[cfg(not(feature = "liquid"))]
             Network::Regtest => 24224,
+            #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => 44224,
             #[cfg(not(feature = "liquid"))]
             Network::Signet => 54224,
 
@@ -449,6 +468,8 @@ impl Config {
             #[cfg(not(feature = "liquid"))]
             Network::Testnet => daemon_dir.push("testnet3"),
             #[cfg(not(feature = "liquid"))]
+            Network::Testnet4 => daemon_dir.push("testnet4"),
+            #[cfg(not(feature = "liquid"))]
             Network::Regtest => daemon_dir.push("regtest"),
             #[cfg(not(feature = "liquid"))]
             Network::Signet => daemon_dir.push("signet"),
@@ -486,6 +507,7 @@ impl Config {
         let config = Config {
             log,
             network_type,
+            magic,
             db_path,
             daemon_dir,
             blocks_dir,
