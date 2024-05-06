@@ -102,7 +102,11 @@ do
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 	fi
-	if [ "${NODENAME}" = "node214" ];then
+	if [ "${NODENAME}" = "node213" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${NETWORK}" = "testnet4" ];then
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 	fi
