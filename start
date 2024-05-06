@@ -43,6 +43,10 @@ case "${1}" in
 		NETWORK=testnet
 		THREADS=$((NPROC / 6))
 	;;
+	testnet4)
+		NETWORK=testnet4
+		THREADS=$((NPROC / 6))
+	;;
 	signet)
 		NETWORK=signet
 		THREADS=$((NPROC / 6))
@@ -60,7 +64,7 @@ case "${1}" in
 		THREADS=$((NPROC / 6))
 	;;
 	*)
-		echo "Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet)"
+		echo "Usage: $0 (mainnet|testnet|testnet4|signet|liquid|liquidtestnet)"
 		exit 1
 	;;
 esac
