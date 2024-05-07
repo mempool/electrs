@@ -128,7 +128,7 @@ impl Network {
 
 pub fn genesis_hash(network: Network) -> BlockHash {
     #[cfg(not(feature = "liquid"))]
-    return bitcoin_genesis_hash(network.into());
+    return bitcoin_genesis_hash(network);
     #[cfg(feature = "liquid")]
     return liquid_genesis_hash(network);
 }
@@ -139,19 +139,28 @@ pub fn bitcoin_genesis_hash(network: Network) -> bitcoin::BlockHash {
             genesis_block(BNetwork::Bitcoin).block_hash();
         static ref TESTNET_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Testnet).block_hash();
-        static ref TESTNET4_GENESIS: bitcoin::BlockHash =
-            BlockHash::from_str("00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043").unwrap();
+        static ref TESTNET4_GENESIS: bitcoin::BlockHash = bitcoin::BlockHash::from_str(
+            "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
+        )
+        .unwrap();
         static ref REGTEST_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Regtest).block_hash();
         static ref SIGNET_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Signet).block_hash();
     }
+    #[cfg(not(feature = "liquid"))]
     match network {
         Network::Bitcoin => *BITCOIN_GENESIS,
         Network::Testnet => *TESTNET_GENESIS,
         Network::Testnet4 => *TESTNET4_GENESIS,
         Network::Regtest => *REGTEST_GENESIS,
         Network::Signet => *SIGNET_GENESIS,
+    }
+    #[cfg(feature = "liquid")]
+    match network {
+        Network::Liquid => *BITCOIN_GENESIS,
+        Network::LiquidTestnet => *TESTNET_GENESIS,
+        Network::LiquidRegtest => *REGTEST_GENESIS,
     }
 }
 
