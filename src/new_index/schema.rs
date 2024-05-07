@@ -1246,9 +1246,16 @@ fn index_blocks(
         .par_iter() // serialization is CPU-intensive
         .map(|b| {
             let mut rows = vec![];
-            for tx in &b.block.txdata {
+            for (idx, tx) in b.block.txdata.iter().enumerate() {
                 let height = b.entry.height() as u32;
-                index_transaction(tx, height, previous_txos_map, &mut rows, iconfig);
+                index_transaction(
+                    tx,
+                    height,
+                    idx as u32,
+                    previous_txos_map,
+                    &mut rows,
+                    iconfig,
+                );
             }
             rows.push(BlockRow::new_done(full_hash(&b.entry.hash()[..])).into_row()); // mark block as "indexed"
             rows
@@ -1261,6 +1268,7 @@ fn index_blocks(
 fn index_transaction(
     tx: &Transaction,
     confirmed_height: u32,
+    tx_position: u32,
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     rows: &mut Vec<DBRow>,
     iconfig: &IndexerConfig,
@@ -1276,6 +1284,7 @@ fn index_transaction(
             let history = TxHistoryRow::new(
                 &txo.script_pubkey,
                 confirmed_height,
+                tx_position,
                 TxHistoryInfo::Funding(FundingInfo {
                     txid,
                     vout: txo_index as u16,
@@ -1302,6 +1311,7 @@ fn index_transaction(
         let history = TxHistoryRow::new(
             &prev_txo.script_pubkey,
             confirmed_height,
+            tx_position,
             TxHistoryInfo::Spending(SpendingInfo {
                 txid,
                 vin: txi_index as u16,
@@ -1326,6 +1336,7 @@ fn index_transaction(
     asset::index_confirmed_tx_assets(
         tx,
         confirmed_height,
+        tx_position,
         iconfig.network,
         iconfig.parent_network,
         rows,
@@ -1567,8 +1578,11 @@ pub struct SpendingInfo {
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TxHistoryInfo {
-    Funding(FundingInfo),
+    // If a spend and a fund for the same scripthash
+    // occur in the same tx, spends should come first.
+    // This ordering comes from the enum order.
     Spending(SpendingInfo),
+    Funding(FundingInfo),
 
     #[cfg(feature = "liquid")]
     Issuing(asset::IssuingInfo),
@@ -1602,6 +1616,7 @@ pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
     pub confirmed_height: u32, // MUST be serialized as big-endian (for correct scans).
+    pub tx_position: u32, // MUST be serialized as big-endian (for correct scans). Position in block.
     pub txinfo: TxHistoryInfo,
 }
 
@@ -1610,11 +1625,17 @@ pub struct TxHistoryRow {
 }
 
 impl TxHistoryRow {
-    fn new(script: &Script, confirmed_height: u32, txinfo: TxHistoryInfo) -> Self {
+    fn new(
+        script: &Script,
+        confirmed_height: u32,
+        tx_position: u32,
+        txinfo: TxHistoryInfo,
+    ) -> Self {
         let key = TxHistoryKey {
             code: b'H',
             hash: compute_script_hash(script),
             confirmed_height,
+            tx_position,
             txinfo,
         };
         TxHistoryRow { key }
@@ -1845,8 +1866,10 @@ mod tests {
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 // confirmed_height
                 0, 0, 0, 2,
+                // tx_position
+                0, 0, 0, 3,
                 // TxHistoryInfo variant (Funding)
-                0, 0, 0, 0,
+                0, 0, 0, 1,
                 // FundingInfo
                 // txid
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
@@ -1865,7 +1888,8 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 0,
+                0, 0, 0, 3,
+                0, 0, 0, 1,
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                 0, 3,
@@ -1879,7 +1903,8 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 1,
+                0, 0, 0, 3,
+                0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                 0, 12,
@@ -1895,7 +1920,8 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 1,
+                0, 0, 0, 3,
+                0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                 0, 12,
@@ -1912,6 +1938,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
                         txid: [2; 32],
                         vout: 3,
@@ -1924,6 +1951,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
                         txid: [2; 32],
                         vout: 3,
@@ -1936,6 +1964,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
                         txid: [18; 32],
                         vin: 12,
@@ -1950,6 +1979,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
                         txid: [18; 32],
                         vin: 12,
