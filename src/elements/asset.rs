@@ -174,7 +174,7 @@ pub struct BurningInfo {
 pub fn index_confirmed_tx_assets(
     tx: &Transaction,
     confirmed_height: u32,
-    tx_position: u32,
+    tx_position: u16,
     network: Network,
     parent_network: BNetwork,
     rows: &mut Vec<DBRow>,
@@ -335,7 +335,7 @@ fn index_tx_assets(
 fn asset_history_row(
     asset_id: &AssetId,
     confirmed_height: u32,
-    tx_position: u32,
+    tx_position: u16,
     txinfo: TxHistoryInfo,
 ) -> TxHistoryRow {
     let key = TxHistoryKey {

@@ -1251,7 +1251,7 @@ fn index_blocks(
                 index_transaction(
                     tx,
                     height,
-                    idx as u32,
+                    idx as u16,
                     previous_txos_map,
                     &mut rows,
                     iconfig,
@@ -1268,14 +1268,14 @@ fn index_blocks(
 fn index_transaction(
     tx: &Transaction,
     confirmed_height: u32,
-    tx_position: u32,
+    tx_position: u16,
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     rows: &mut Vec<DBRow>,
     iconfig: &IndexerConfig,
 ) {
     // persist history index:
-    //      H{funding-scripthash}{funding-height}F{funding-txid:vout} → ""
-    //      H{funding-scripthash}{spending-height}S{spending-txid:vin}{funding-txid:vout} → ""
+    //      H{funding-scripthash}{spending-height}{spending-block-pos}S{spending-txid:vin}{funding-txid:vout} → ""
+    //      H{funding-scripthash}{funding-height}{funding-block-pos}F{funding-txid:vout} → ""
     // persist "edges" for fast is-this-TXO-spent check
     //      S{funding-txid:vout}{spending-txid:vin} → ""
     let txid = full_hash(&tx.txid()[..]);
@@ -1616,7 +1616,7 @@ pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
     pub confirmed_height: u32, // MUST be serialized as big-endian (for correct scans).
-    pub tx_position: u32, // MUST be serialized as big-endian (for correct scans). Position in block.
+    pub tx_position: u16, // MUST be serialized as big-endian (for correct scans). Position in block.
     pub txinfo: TxHistoryInfo,
 }
 
@@ -1628,7 +1628,7 @@ impl TxHistoryRow {
     fn new(
         script: &Script,
         confirmed_height: u32,
-        tx_position: u32,
+        tx_position: u16,
         txinfo: TxHistoryInfo,
     ) -> Self {
         let key = TxHistoryKey {
@@ -1867,7 +1867,7 @@ mod tests {
                 // confirmed_height
                 0, 0, 0, 2,
                 // tx_position
-                0, 0, 0, 3,
+                0, 3,
                 // TxHistoryInfo variant (Funding)
                 0, 0, 0, 1,
                 // FundingInfo
@@ -1888,7 +1888,7 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 3,
+                0, 3,
                 0, 0, 0, 1,
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
@@ -1903,7 +1903,7 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 3,
+                0, 3,
                 0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
@@ -1920,7 +1920,7 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 3,
+                0, 3,
                 0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
