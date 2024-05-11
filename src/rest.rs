@@ -1039,9 +1039,15 @@ fn handle_request(
                 .into_iter()
                 .map(UtxoValue::from)
                 .collect();
-
+            let filter_confirmed = |utxo: &UtxoValue, confirmed| {
+                if confirmed {
+                    utxo.status.confirmed == confirmed
+                } else {
+                    true
+                }
+            };
             utxos.retain(|utxo| {
-                utxo.value >= min_amount && utxo.status.confirmed == confirmed
+                utxo.value >= min_amount && filter_confirmed(utxo, confirmed)
             });
             utxos.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap());
 
