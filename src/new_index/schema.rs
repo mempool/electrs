@@ -533,23 +533,23 @@ impl ChainQuery {
         let rows = self
             .history_iter_scan_reverse(code, hash)
             .map(TxHistoryRow::from_row)
-            .map(|row| (row.get_txid(), row.key.txinfo))
-            .skip_while(|(txid, _)| {
+            .map(|row| (row.get_txid(), row.key.txinfo, row.key.tx_position))
+            .skip_while(|(txid, _, _)| {
                 // skip until we reach the last_seen_txid
                 last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
             })
-            .skip_while(|(txid, _)| {
+            .skip_while(|(txid, _, _)| {
                 // skip the last_seen_txid itself
                 last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid == txid)
             })
-            .filter_map(|(txid, info)| {
+            .filter_map(|(txid, info, tx_position)| {
                 self.tx_confirming_block(&txid)
-                    .map(|b| (txid, info, b.height, b.time))
+                    .map(|b| (txid, info, b.height, b.time, tx_position))
             });
 
         // collate utxo funding/spending events by transaction
         let mut map: HashMap<Txid, TxHistorySummary> = HashMap::new();
-        for (txid, info, height, time) in rows {
+        for (txid, info, height, time, tx_position) in rows {
             if !map.contains_key(&txid) && map.len() == limit {
                 break;
             }
@@ -565,6 +565,7 @@ impl ChainQuery {
                             value: info.value.try_into().unwrap_or(0),
                             height,
                             time,
+                            tx_position,
                         });
                 }
                 #[cfg(not(feature = "liquid"))]
@@ -578,6 +579,7 @@ impl ChainQuery {
                             value: 0_i64.saturating_sub(info.value.try_into().unwrap_or(0)),
                             height,
                             time,
+                            tx_position,
                         });
                 }
                 #[cfg(feature = "liquid")]
@@ -587,6 +589,7 @@ impl ChainQuery {
                         value: 0,
                         height,
                         time,
+                        tx_position,
                     });
                 }
                 #[cfg(feature = "liquid")]
@@ -596,6 +599,7 @@ impl ChainQuery {
                         value: 0,
                         height,
                         time,
+                        tx_position,
                     });
                 }
                 #[cfg(feature = "liquid")]
@@ -606,7 +610,11 @@ impl ChainQuery {
         let mut tx_summaries = map.into_values().collect::<Vec<TxHistorySummary>>();
         tx_summaries.sort_by(|a, b| {
             if a.height == b.height {
-                a.value.cmp(&b.value)
+                if a.tx_position == b.tx_position {
+                    a.value.cmp(&b.value)
+                } else {
+                    b.tx_position.cmp(&a.tx_position)
+                }
             } else {
                 b.height.cmp(&a.height)
             }
@@ -1702,6 +1710,7 @@ pub struct TxHistorySummary {
     height: usize,
     value: i64,
     time: u32,
+    tx_position: u16,
 }
 
 #[derive(Serialize, Deserialize)]
