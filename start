@@ -95,7 +95,7 @@ generate_popular_scripts() {
 	cd "${HOME}/electrs"
 	HIGH_USAGE_THRESHOLD=101 \
 	JOB_THREAD_COUNT=${THREADS} \
-	cargo run \
+	nice cargo run \
 		--release \
 		--bin popular-scripts \
 		--features "${FEATURES}" \
