@@ -1,6 +1,6 @@
 [package]
 name = "mempool-electrs"
-version = "3.0.0-dev"
+version = "3.0.1"
 authors = [
     "Roman Zeyde <me@romanzey.de>",
     "Nadav Ivgi <nadav@shesek.info>",
