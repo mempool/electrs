@@ -39,6 +39,7 @@ use std::num::ParseIntError;
 use std::os::unix::fs::FileTypeExt;
 use std::sync::Arc;
 use std::thread;
+use ordinals::{Artifact, RuneId, Runestone};
 use url::form_urlencoded;
 
 const ADDRESS_SEARCH_LIMIT: usize = 10;
@@ -1065,6 +1066,26 @@ fn handle_request(
             json_response(choose_list, TTL_SHORT)
         }
 
+        (
+            &Method::POST,
+            Some(&"runes_extra_data"),
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            let (tx_hash, is_deposit): (String, bool) =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let hash = Txid::from_hex(&tx_hash)?;
+            let rawtx = query
+                .lookup_raw_txn(&hash)
+                .ok_or_else(|| HttpError::not_found("Transaction not found".to_string()))?;
+            let tx: bitcoin_new::Transaction =
+                bitcoin_new::consensus::deserialize(&rawtx).map_err(|e| HttpError::from(e.to_string()))?;
+            let op_return = parse_cross_data_from_op_return(&tx, is_deposit)?;
+            http_message(StatusCode::OK, op_return.to_hex(), 0)
+        }
 
         (&Method::GET, Some(&"address-prefix"), Some(prefix), None, None, None) => {
             if !config.address_search {
@@ -1665,6 +1686,39 @@ fn parse_scripthash(scripthash: &str) -> Result<FullHash, HttpError> {
         Err(HttpError::from("Invalid scripthash".to_string()))
     } else {
         Ok(full_hash(&bytes))
+    }
+}
+
+fn parse_cross_data_from_op_return(
+    tx: &bitcoin_new::Transaction,
+    is_deposit: bool,
+) -> Result<Vec<u8>, HttpError> {
+    let res = Runestone::decipher(&tx).ok_or(HttpError::from("decipher Runestone failed".to_string()))?;
+    if let Artifact::Runestone(runestone) = res {
+        let custom_edicts: Vec<_> = runestone
+            .edicts
+            .iter()
+            .filter(|v| v.id == RuneId::new(0, 0).unwrap())
+            .collect();
+        if is_deposit {
+            if custom_edicts.len() != 3 {
+                return Err(HttpError::from(format!("Invalid deposit edicts length: {:?}, expect 3", custom_edicts.len())));
+            }
+            let part_data: Vec<Vec<u8>> = custom_edicts
+                .iter()
+                .map(|v| v.amount.to_be_bytes()[4..].to_vec())
+                .collect();
+            Ok(part_data.concat().to_vec())
+        } else {
+            if custom_edicts.len() != 2 {
+                return Err(HttpError::from(format!("Invalid withdraw edicts length: {:?}, expect 2", custom_edicts.len())));
+            }
+            let uid1 = custom_edicts[0].amount.to_be_bytes();
+            let uid2 = custom_edicts[1].amount.to_be_bytes();
+            Ok([uid1, uid2].concat())
+        }
+    } else {
+        Err(HttpError::from("Artifact match to Cenotaph".to_string()))
     }
 }
 
