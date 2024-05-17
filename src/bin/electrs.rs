@@ -50,6 +50,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         config.daemon_rpc_addr,
         config.cookie_getter(),
         config.network_type,
+        config.magic,
         signal.clone(),
         &metrics,
     )?);
@@ -74,7 +75,18 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         &metrics,
         Arc::clone(&config),
     )));
-    mempool.write().unwrap().update(&daemon)?;
+    loop {
+        match Mempool::update(&mempool, &daemon) {
+            Ok(_) => break,
+            Err(e) => {
+                warn!(
+                    "Error performing initial mempool update, trying again in 5 seconds: {}",
+                    e.display_chain()
+                );
+                signal.wait(Duration::from_secs(5), false)?;
+            }
+        }
+    }
 
     #[cfg(feature = "liquid")]
     let asset_db = config.asset_db_path.as_ref().map(|db_dir| {
@@ -93,7 +105,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
     ));
 
     // TODO: configuration for which servers to start
-    let rest_server = rest::start(Arc::clone(&config), Arc::clone(&query));
+    let rest_server = rest::start(Arc::clone(&config), Arc::clone(&query), &metrics);
     let electrum_server = ElectrumRPC::start(Arc::clone(&config), Arc::clone(&query), &metrics);
 
     if let Some(ref precache_file) = config.precache_scripts {
@@ -107,7 +119,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
     }
 
     loop {
-        if let Err(err) = signal.wait(Duration::from_millis(500), true) {
+        if let Err(err) = signal.wait(Duration::from_millis(config.main_loop_delay), true) {
             info!("stopping server: {}", err);
 
             electrs::util::spawn_thread("shutdown-thread-checker", || {
@@ -136,7 +148,13 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         };
 
         // Update mempool
-        mempool.write().unwrap().update(&daemon)?;
+        if let Err(e) = Mempool::update(&mempool, &daemon) {
+            // Log the error if the result is an Err
+            warn!(
+                "Error updating mempool, skipping mempool update: {}",
+                e.display_chain()
+            );
+        }
 
         // Update subscribed clients
         electrum_server.notify();

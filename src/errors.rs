@@ -14,9 +14,14 @@ error_chain! {
             display("Iterrupted by signal {}", sig)
         }
 
-        TooPopular {
-            description("Too many history entries")
-            display("Too many history entries")
+        TooManyUtxos(limit: usize) {
+            description("Too many unspent transaction outputs. Contact support to raise limits.")
+            display("Too many unspent transaction outputs (>{}). Contact support to raise limits.", limit)
+        }
+
+        TooManyTxs(limit: usize) {
+            description("Too many history transactions. Contact support to raise limits.")
+            display("Too many history transactions (>{}). Contact support to raise limits.", limit)
         }
 
         #[cfg(feature = "electrum-discovery")]

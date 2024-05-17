@@ -1,6 +1,7 @@
 use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
 use crate::config::{Config, VERSION_STRING};
 use crate::errors;
+use crate::metrics::Metrics;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
     create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
@@ -17,10 +18,11 @@ use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
+use prometheus::{HistogramOpts, HistogramVec};
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
-use std::fs;
+use std::{cmp, fs};
 #[cfg(feature = "liquid")]
 use {
     crate::elements::{peg::PegoutValue, AssetSorting, IssuanceValue},
@@ -50,6 +52,9 @@ const TTL_LONG: u32 = 157_784_630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
+
+// internal api prefix
+const INTERNAL_PREFIX: &str = "internal";
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -549,7 +554,12 @@ fn prepare_txs(
 }
 
 #[tokio::main]
-async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receiver<()>) {
+async fn run_server(
+    config: Arc<Config>,
+    query: Arc<Query>,
+    rx: oneshot::Receiver<()>,
+    metric: HistogramVec,
+) {
     let addr = &config.http_addr;
     let socket_file = &config.http_socket_file;
 
@@ -559,31 +569,36 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
     let make_service_fn_inn = || {
         let query = Arc::clone(&query);
         let config = Arc::clone(&config);
+        let metric = metric.clone();
 
         async move {
             Ok::<_, hyper::Error>(service_fn(move |req| {
                 let query = Arc::clone(&query);
                 let config = Arc::clone(&config);
+                let timer = metric.with_label_values(&["all_methods"]).start_timer();
 
                 async move {
                     let method = req.method().clone();
                     let uri = req.uri().clone();
                     let body = hyper::body::to_bytes(req.into_body()).await?;
 
-                    let mut resp = handle_request(method, uri, body, &query, &config)
-                        .unwrap_or_else(|err| {
-                            warn!("{:?}", err);
-                            Response::builder()
-                                .status(err.0)
-                                .header("Content-Type", "text/plain")
-                                .header("X-Powered-By", &**VERSION_STRING)
-                                .body(Body::from(err.1))
-                                .unwrap()
-                        });
+                    let mut resp = tokio::task::block_in_place(|| {
+                        handle_request(method, uri, body, &query, &config)
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!("{:?}", err);
+                        Response::builder()
+                            .status(err.0)
+                            .header("Content-Type", "text/plain")
+                            .header("X-Powered-By", &**VERSION_STRING)
+                            .body(Body::from(err.1))
+                            .unwrap()
+                    });
                     if let Some(ref origins) = config.cors {
                         resp.headers_mut()
                             .insert("Access-Control-Allow-Origin", origins.parse().unwrap());
                     }
+                    timer.observe_duration();
                     Ok::<_, hyper::Error>(resp)
                 }
             }))
@@ -630,13 +645,17 @@ async fn run_server(config: Arc<Config>, query: Arc<Query>, rx: oneshot::Receive
     }
 }
 
-pub fn start(config: Arc<Config>, query: Arc<Query>) -> Handle {
+pub fn start(config: Arc<Config>, query: Arc<Query>, metrics: &Metrics) -> Handle {
     let (tx, rx) = oneshot::channel::<()>();
+    let response_timer = metrics.histogram_vec(
+        HistogramOpts::new("electrs_rest_api", "Electrs REST API response timings"),
+        &["method"],
+    );
 
     Handle {
         tx,
         thread: crate::util::spawn_thread("rest-server", move || {
-            run_server(config, query, rx);
+            run_server(config, query, rx, response_timer);
         }),
     }
 }
@@ -726,17 +745,19 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             json_response(txids, TTL_LONG)
         }
-        (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), None, None) => {
+        (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
+            let block_id = query.chain().blockid_by_hash(&hash);
             let txs = query
                 .chain()
                 .get_block_txs(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
                 .into_iter()
-                .map(|tx| (tx, None))
+                .map(|tx| (tx, block_id.clone()))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            let ttl = ttl_by_depth(block_id.map(|b| b.height), query);
+            json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -941,6 +962,38 @@ fn handle_request(
             Some(script_type @ &"address"),
             Some(script_str),
             Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+        )
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+        ) => {
+            let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = cmp::min(
+                config.rest_default_max_address_summary_txs,
+                query_params
+                    .get("max_txs")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(config.rest_default_max_address_summary_txs),
+            );
+
+            let summary = query
+                .chain()
+                .summary(&script_hash[..], last_seen_txid.as_ref(), max_txs);
+
+            json_response(summary, TTL_SHORT)
+        }
+        (
+            &Method::GET,
+            Some(script_type @ &"address"),
+            Some(script_str),
+            Some(&"txs"),
             Some(&"mempool"),
             None,
         )
@@ -1018,6 +1071,29 @@ fn handle_request(
                 )
             } else {
                 json_response(tx.remove(0), ttl)
+            }
+        }
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"txs"), None, None, None) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            match txid_strings
+                .into_iter()
+                .map(|txid| Txid::from_hex(&txid))
+                .collect::<Result<Vec<Txid>, _>>()
+            {
+                Ok(txids) => {
+                    let txs: Vec<(Transaction, Option<BlockId>)> = txids
+                        .iter()
+                        .filter_map(|txid| {
+                            query
+                                .lookup_txn(txid)
+                                .map(|tx| (tx, query.chain().tx_confirming_block(txid)))
+                        })
+                        .collect();
+                    json_response(prepare_txs(txs, query, config), 0)
+                }
+                Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
             }
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
@@ -1126,6 +1202,48 @@ fn handle_request(
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
         }
+        (&Method::POST, Some(&"txs"), Some(&"test"), None, None, None) => {
+            let txhexes: Vec<String> =
+                serde_json::from_str(String::from_utf8(body.to_vec())?.as_str())?;
+
+            if txhexes.len() > 25 {
+                Result::Err(HttpError::from(
+                    "Exceeded maximum of 25 transactions".to_string(),
+                ))?
+            }
+
+            let maxfeerate = query_params
+                .get("maxfeerate")
+                .map(|s| {
+                    s.parse::<f64>()
+                        .map_err(|_| HttpError::from("Invalid maxfeerate".to_string()))
+                })
+                .transpose()?;
+
+            // pre-checks
+            txhexes.iter().enumerate().try_for_each(|(index, txhex)| {
+                // each transaction must be of reasonable size (more than 60 bytes, within 400kWU standardness limit)
+                if !(120..800_000).contains(&txhex.len()) {
+                    Result::Err(HttpError::from(format!(
+                        "Invalid transaction size for item {}",
+                        index
+                    )))
+                } else {
+                    // must be a valid hex string
+                    Vec::<u8>::from_hex(txhex)
+                        .map_err(|_| {
+                            HttpError::from(format!("Invalid transaction hex for item {}", index))
+                        })
+                        .map(|_| ())
+                }
+            })?;
+
+            let result = query
+                .test_mempool_accept(txhexes, maxfeerate)
+                .map_err(|err| HttpError::from(err.description().to_string()))?;
+
+            json_response(result, TTL_SHORT)
+        }
         (&Method::GET, Some(&"txs"), Some(&"outspends"), None, None, None) => {
             let txid_strings: Vec<&str> = query_params
                 .get("txids")
@@ -1158,6 +1276,69 @@ fn handle_request(
 
             json_response(spends, TTL_SHORT)
         }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-txid"),
+            None,
+        ) => {
+            let txid_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<Vec<SpendingValue>> = txid_strings
+                .into_iter()
+                .map(|txid_str| {
+                    Txid::from_hex(&txid_str)
+                        .ok()
+                        .and_then(|txid| query.lookup_txn(&txid))
+                        .map_or_else(Vec::new, |tx| {
+                            query
+                                .lookup_tx_spends(tx)
+                                .into_iter()
+                                .map(|spend| {
+                                    spend.map_or_else(SpendingValue::default, SpendingValue::from)
+                                })
+                                .collect()
+                        })
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
+        (
+            &Method::POST,
+            Some(&INTERNAL_PREFIX),
+            Some(&"txs"),
+            Some(&"outspends"),
+            Some(&"by-outpoint"),
+            None,
+        ) => {
+            let outpoint_strings: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            let spends: Vec<SpendingValue> = outpoint_strings
+                .into_iter()
+                .map(|outpoint_str| {
+                    let mut parts = outpoint_str.split(':');
+                    let hash_part = parts.next();
+                    let index_part = parts.next();
+
+                    if let (Some(hash), Some(index)) = (hash_part, index_part) {
+                        if let (Ok(txid), Ok(vout)) = (Txid::from_hex(hash), index.parse::<u32>()) {
+                            let outpoint = OutPoint { txid, vout };
+                            return query
+                                .lookup_spend(&outpoint)
+                                .map_or_else(SpendingValue::default, SpendingValue::from);
+                        }
+                    }
+                    SpendingValue::default()
+                })
+                .collect();
+
+            json_response(spends, TTL_SHORT)
+        }
 
         (&Method::GET, Some(&"mempool"), None, None, None, None) => {
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
@@ -1165,7 +1346,25 @@ fn handle_request(
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
             json_response(query.mempool().txids(), TTL_SHORT)
         }
-        (&Method::GET, Some(&"mempool"), Some(&"txs"), Some(&"all"), None, None) => {
+        (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(config.rest_max_mempool_txid_page_size);
+            json_response(
+                query.mempool().txids_page(max_txs, last_seen_txid),
+                TTL_SHORT,
+            )
+        }
+        (
+            &Method::GET,
+            Some(&INTERNAL_PREFIX),
+            Some(&"mempool"),
+            Some(&"txs"),
+            Some(&"all"),
+            None,
+        ) => {
             let txs = query
                 .mempool()
                 .txs()
@@ -1175,7 +1374,7 @@ fn handle_request(
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
-        (&Method::POST, Some(&"mempool"), Some(&"txs"), None, None, None) => {
+        (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"mempool"), Some(&"txs"), None, None) => {
             let txid_strings: Vec<String> =
                 serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
 
@@ -1198,11 +1397,22 @@ fn handle_request(
                 Err(err) => http_message(StatusCode::BAD_REQUEST, err.to_string(), 0),
             }
         }
-        (&Method::GET, Some(&"mempool"), Some(&"txs"), last_seen_txid, None, None) => {
+        (
+            &Method::GET,
+            Some(&INTERNAL_PREFIX),
+            Some(&"mempool"),
+            Some(&"txs"),
+            last_seen_txid,
+            None,
+        ) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(config.rest_max_mempool_page_size);
             let txs = query
                 .mempool()
-                .txs_page(10_000, last_seen_txid)
+                .txs_page(max_txs, last_seen_txid)
                 .into_iter()
                 .map(|tx| (tx, None))
                 .collect();
@@ -1458,7 +1668,7 @@ fn address_to_scripthash(addr: &str, network: Network) -> Result<FullHash, HttpE
         // `addr_network` will be detected as Testnet for all of them.
         addr_network == network
             || (addr_network == Network::Testnet
-                && matches!(network, Network::Regtest | Network::Signet))
+                && matches!(network, Network::Regtest | Network::Signet | Network::Testnet4))
     };
 
     #[cfg(feature = "liquid")]

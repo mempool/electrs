@@ -329,7 +329,12 @@ impl Indexer {
             .added_blockhashes
             .write()
             .unwrap()
-            .extend(blocks.iter().map(|b| b.entry.hash()));
+            .extend(blocks.iter().map(|b| {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("Tx indexing is up to height={}", b.entry.height());
+                }
+                b.entry.hash()
+            }));
     }
 
     fn index(&self, blocks: &[BlockEntry]) {
@@ -342,6 +347,9 @@ impl Indexer {
             let _timer = self.start_timer("index_process");
             let added_blockhashes = self.store.added_blockhashes.read().unwrap();
             for b in blocks {
+                if b.entry.height() % 10_000 == 0 {
+                    info!("History indexing is up to height={}", b.entry.height());
+                }
                 let blockhash = b.entry.hash();
                 // TODO: replace by lookup into txstore_db?
                 if !added_blockhashes.contains(blockhash) {
@@ -502,6 +510,108 @@ impl ChainQuery {
             &TxHistoryRow::filter(code, hash),
             &TxHistoryRow::prefix_end(code, hash),
         )
+    }
+
+    pub fn summary(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        // scripthash lookup
+        self._summary(b'H', scripthash, last_seen_txid, limit)
+    }
+
+    fn _summary(
+        &self,
+        code: u8,
+        hash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<TxHistorySummary> {
+        let _timer_scan = self.start_timer("address_summary");
+        let rows = self
+            .history_iter_scan_reverse(code, hash)
+            .map(TxHistoryRow::from_row)
+            .map(|row| (row.get_txid(), row.key.txinfo))
+            .skip_while(|(txid, _)| {
+                // skip until we reach the last_seen_txid
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+            })
+            .skip_while(|(txid, _)| {
+                // skip the last_seen_txid itself
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid == txid)
+            })
+            .filter_map(|(txid, info)| {
+                self.tx_confirming_block(&txid)
+                    .map(|b| (txid, info, b.height, b.time))
+            });
+
+        // collate utxo funding/spending events by transaction
+        let mut map: HashMap<Txid, TxHistorySummary> = HashMap::new();
+        for (txid, info, height, time) in rows {
+            if !map.contains_key(&txid) && map.len() == limit {
+                break;
+            }
+            match info {
+                #[cfg(not(feature = "liquid"))]
+                TxHistoryInfo::Funding(info) => {
+                    map.entry(txid)
+                        .and_modify(|tx| {
+                            tx.value = tx.value.saturating_add(info.value.try_into().unwrap_or(0))
+                        })
+                        .or_insert(TxHistorySummary {
+                            txid,
+                            value: info.value.try_into().unwrap_or(0),
+                            height,
+                            time,
+                        });
+                }
+                #[cfg(not(feature = "liquid"))]
+                TxHistoryInfo::Spending(info) => {
+                    map.entry(txid)
+                        .and_modify(|tx| {
+                            tx.value = tx.value.saturating_sub(info.value.try_into().unwrap_or(0))
+                        })
+                        .or_insert(TxHistorySummary {
+                            txid,
+                            value: 0_i64.saturating_sub(info.value.try_into().unwrap_or(0)),
+                            height,
+                            time,
+                        });
+                }
+                #[cfg(feature = "liquid")]
+                TxHistoryInfo::Funding(_info) => {
+                    map.entry(txid).or_insert(TxHistorySummary {
+                        txid,
+                        value: 0,
+                        height,
+                        time,
+                    });
+                }
+                #[cfg(feature = "liquid")]
+                TxHistoryInfo::Spending(_info) => {
+                    map.entry(txid).or_insert(TxHistorySummary {
+                        txid,
+                        value: 0,
+                        height,
+                        time,
+                    });
+                }
+                #[cfg(feature = "liquid")]
+                _ => {}
+            }
+        }
+
+        let mut tx_summaries = map.into_values().collect::<Vec<TxHistorySummary>>();
+        tx_summaries.sort_by(|a, b| {
+            if a.height == b.height {
+                a.value.cmp(&b.value)
+            } else {
+                b.height.cmp(&a.height)
+            }
+        });
+        tx_summaries
     }
 
     pub fn history(
@@ -671,7 +781,7 @@ impl ChainQuery {
 
             // abort if the utxo set size excedees the limit at any point in time
             if utxos.len() > limit {
-                bail!(ErrorKind::TooPopular)
+                bail!(ErrorKind::TooManyUtxos(limit))
             }
         }
 
@@ -1087,11 +1197,23 @@ fn lookup_txos(
     outpoints: &BTreeSet<OutPoint>,
     allow_missing: bool,
 ) -> HashMap<OutPoint, TxOut> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(16) // we need to saturate SSD IOPS
-        .thread_name(|i| format!("lookup-txo-{}", i))
-        .build()
-        .unwrap();
+    let mut loop_count = 10;
+    let pool = loop {
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(16) // we need to saturate SSD IOPS
+            .thread_name(|i| format!("lookup-txo-{}", i))
+            .build()
+        {
+            Ok(pool) => break pool,
+            Err(e) => {
+                if loop_count == 0 {
+                    panic!("schema::lookup_txos failed to create a ThreadPool: {}", e);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                loop_count -= 1;
+            }
+        }
+    };
     pool.install(|| {
         outpoints
             .par_iter()
@@ -1551,6 +1673,14 @@ impl TxHistoryInfo {
             | TxHistoryInfo::Pegout(_) => unreachable!(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TxHistorySummary {
+    txid: Txid,
+    height: usize,
+    value: i64,
+    time: u32,
 }
 
 #[derive(Serialize, Deserialize)]

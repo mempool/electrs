@@ -117,6 +117,26 @@ struct NetworkInfo {
     relayfee: f64, // in BTC/kB
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct MempoolFees {
+    base: f64,
+    #[serde(rename = "effective-feerate")]
+    effective_feerate: f64,
+    #[serde(rename = "effective-includes")]
+    effective_includes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolAcceptResult {
+    txid: String,
+    wtxid: String,
+    allowed: Option<bool>,
+    vsize: Option<u32>,
+    fees: Option<MempoolFees>,
+    #[serde(rename = "reject-reason")]
+    reject_reason: Option<String>,
+}
+
 pub trait CookieGetter: Send + Sync {
     fn get(&self) -> Result<Vec<u8>>;
 }
@@ -264,6 +284,7 @@ pub struct Daemon {
     daemon_dir: PathBuf,
     blocks_dir: PathBuf,
     network: Network,
+    magic: Option<u32>,
     conn: Mutex<Connection>,
     message_id: Counter, // for monotonic JSONRPC 'id'
     signal: Waiter,
@@ -280,6 +301,7 @@ impl Daemon {
         daemon_rpc_addr: SocketAddr,
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
+        magic: Option<u32>,
         signal: Waiter,
         metrics: &Metrics,
     ) -> Result<Daemon> {
@@ -287,6 +309,7 @@ impl Daemon {
             daemon_dir,
             blocks_dir,
             network,
+            magic,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
                 cookie_getter,
@@ -321,10 +344,10 @@ impl Daemon {
             let mempool = daemon.getmempoolinfo()?;
 
             let ibd_done = if network.is_regtest() {
-                info.blocks == 0 && info.headers == 0
+                info.blocks == info.headers
             } else {
-                false
-            } || !info.initialblockdownload.unwrap_or(false);
+                !info.initialblockdownload.unwrap_or(false)
+            };
 
             if mempool.loaded && ibd_done && info.blocks == info.headers {
                 break;
@@ -347,6 +370,7 @@ impl Daemon {
             daemon_dir: self.daemon_dir.clone(),
             blocks_dir: self.blocks_dir.clone(),
             network: self.network,
+            magic: self.magic,
             conn: Mutex::new(self.conn.lock().unwrap().reconnect()?),
             message_id: Counter::new(),
             signal: self.signal.clone(),
@@ -367,7 +391,7 @@ impl Daemon {
     }
 
     pub fn magic(&self) -> u32 {
-        self.network.magic()
+        self.magic.unwrap_or_else(|| self.network.magic())
     }
 
     fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
@@ -387,19 +411,46 @@ impl Daemon {
         Ok(result)
     }
 
-    fn handle_request_batch(&self, method: &str, params_list: &[Value]) -> Result<Vec<Value>> {
+    fn handle_request_batch(
+        &self,
+        method: &str,
+        params_list: &[Value],
+        failure_threshold: f64,
+    ) -> Result<Vec<Value>> {
         let id = self.message_id.next();
         let chunks = params_list
             .iter()
             .map(|params| json!({"method": method, "params": params, "id": id}))
             .chunks(50_000); // Max Amount of batched requests
         let mut results = vec![];
+        let total_requests = params_list.len();
+        let mut failed_requests: u64 = 0;
+        let threshold = (failure_threshold * total_requests as f64).round() as u64;
+        let mut n = 0;
+
         for chunk in &chunks {
             let reqs = chunk.collect();
             let mut replies = self.call_jsonrpc(method, &reqs)?;
             if let Some(replies_vec) = replies.as_array_mut() {
                 for reply in replies_vec {
-                    results.push(parse_jsonrpc_reply(reply.take(), method, id)?)
+                    n += 1;
+                    match parse_jsonrpc_reply(reply.take(), method, id) {
+                        Ok(parsed_reply) => results.push(parsed_reply),
+                        Err(e) => {
+                            failed_requests += 1;
+                            warn!(
+                                "batch request {} {}/{} failed: {}",
+                                method,
+                                n,
+                                total_requests,
+                                e.to_string()
+                            );
+                            // abort and return the last error once a threshold number of requests have failed
+                            if failed_requests > threshold {
+                                return Err(e);
+                            }
+                        }
+                    }
                 }
             } else {
                 bail!("non-array replies: {:?}", replies);
@@ -409,9 +460,14 @@ impl Daemon {
         Ok(results)
     }
 
-    fn retry_request_batch(&self, method: &str, params_list: &[Value]) -> Result<Vec<Value>> {
+    fn retry_request_batch(
+        &self,
+        method: &str,
+        params_list: &[Value],
+        failure_threshold: f64,
+    ) -> Result<Vec<Value>> {
         loop {
-            match self.handle_request_batch(method, params_list) {
+            match self.handle_request_batch(method, params_list, failure_threshold) {
                 Err(Error(ErrorKind::Connection(msg), _)) => {
                     warn!("reconnecting to bitcoind: {}", msg);
                     self.signal.wait(Duration::from_secs(3), false)?;
@@ -425,13 +481,13 @@ impl Daemon {
     }
 
     fn request(&self, method: &str, params: Value) -> Result<Value> {
-        let mut values = self.retry_request_batch(method, &[params])?;
+        let mut values = self.retry_request_batch(method, &[params], 0.0)?;
         assert_eq!(values.len(), 1);
         Ok(values.remove(0))
     }
 
     fn requests(&self, method: &str, params_list: &[Value]) -> Result<Vec<Value>> {
-        self.retry_request_batch(method, params_list)
+        self.retry_request_batch(method, params_list, 0.0)
     }
 
     // bitcoind JSONRPC API:
@@ -506,13 +562,12 @@ impl Daemon {
             .iter()
             .map(|txhash| json!([txhash.to_hex(), /*verbose=*/ false]))
             .collect();
-
-        let values = self.requests("getrawtransaction", &params_list)?;
+        let values = self.retry_request_batch("getrawtransaction", &params_list, 0.25)?;
         let mut txs = vec![];
         for value in values {
             txs.push(tx_from_value(value)?);
         }
-        assert_eq!(txhashes.len(), txs.len());
+        // missing transactions are skipped, so the number of txs returned may be less than the number of txids requested
         Ok(txs)
     }
 
@@ -549,6 +604,20 @@ impl Daemon {
         let txid = self.request("sendrawtransaction", json!([txhex]))?;
         Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
             .chain_err(|| "failed to parse txid")
+    }
+
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f64>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        let params = match maxfeerate {
+            Some(rate) => json!([txhex, format!("{:.8}", rate)]),
+            None => json!([txhex]),
+        };
+        let result = self.request("testmempoolaccept", params)?;
+        serde_json::from_value::<Vec<MempoolAcceptResult>>(result)
+            .chain_err(|| "invalid testmempoolaccept reply")
     }
 
     // Get estimated feerates for the provided confirmation targets using a batch RPC request

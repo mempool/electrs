@@ -1,20 +1,28 @@
 [package]
-name = "electrs"
+name = "mempool-electrs"
 version = "3.0.0-dev"
-authors = ["Roman Zeyde <me@romanzey.de>"]
+authors = [
+    "Roman Zeyde <me@romanzey.de>",
+    "Nadav Ivgi <nadav@shesek.info>",
+    "wiz <j@wiz.biz>",
+    "junderw <jonathan.underwood4649@gmail.com>"
+]
 description = "An efficient re-implementation of Electrum Server in Rust"
 license = "MIT"
 homepage = "https://github.com/mempool/electrs"
 repository = "https://github.com/mempool/electrs"
+publish = false
 keywords = ["bitcoin", "electrum", "server", "index", "database"]
-documentation = "https://docs.rs/electrs/"
 readme = "README.md"
 edition = "2018"
 
+[lib]
+name = "electrs"
+
 [features]
 default = []
-liquid = [ "elements" ]
-electrum-discovery = [ "electrum-client"]
+liquid = ["elements"]
+electrum-discovery = ["electrum-client"]
 
 [dependencies]
 arrayref = "0.3.6"

@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 #[cfg(not(feature = "liquid"))] // use regular Bitcoin data structures
 pub use bitcoin::{
     blockdata::{opcodes, script, witness::Witness},
@@ -31,6 +33,8 @@ pub enum Network {
     Bitcoin,
     #[cfg(not(feature = "liquid"))]
     Testnet,
+    #[cfg(not(feature = "liquid"))]
+    Testnet4,
     #[cfg(not(feature = "liquid"))]
     Regtest,
     #[cfg(not(feature = "liquid"))]
@@ -129,22 +133,25 @@ pub fn genesis_hash(network: Network) -> BlockHash {
     return liquid_genesis_hash(network);
 }
 
-pub fn bitcoin_genesis_hash(network: BNetwork) -> bitcoin::BlockHash {
+pub fn bitcoin_genesis_hash(network: Network) -> bitcoin::BlockHash {
     lazy_static! {
         static ref BITCOIN_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Bitcoin).block_hash();
         static ref TESTNET_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Testnet).block_hash();
+        static ref TESTNET4_GENESIS: bitcoin::BlockHash =
+            BlockHash::from_str("00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043").unwrap();
         static ref REGTEST_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Regtest).block_hash();
         static ref SIGNET_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Signet).block_hash();
     }
     match network {
-        BNetwork::Bitcoin => *BITCOIN_GENESIS,
-        BNetwork::Testnet => *TESTNET_GENESIS,
-        BNetwork::Regtest => *REGTEST_GENESIS,
-        BNetwork::Signet => *SIGNET_GENESIS,
+        Network::Bitcoin => *BITCOIN_GENESIS,
+        Network::Testnet => *TESTNET_GENESIS,
+        Network::Testnet4 => *TESTNET4_GENESIS,
+        Network::Regtest => *REGTEST_GENESIS,
+        Network::Signet => *SIGNET_GENESIS,
     }
 }
 
@@ -174,6 +181,8 @@ impl From<&str> for Network {
             #[cfg(not(feature = "liquid"))]
             "testnet" => Network::Testnet,
             #[cfg(not(feature = "liquid"))]
+            "testnet4" => Network::Testnet4,
+            #[cfg(not(feature = "liquid"))]
             "regtest" => Network::Regtest,
             #[cfg(not(feature = "liquid"))]
             "signet" => Network::Signet,
@@ -196,6 +205,7 @@ impl From<Network> for BNetwork {
         match network {
             Network::Bitcoin => BNetwork::Bitcoin,
             Network::Testnet => BNetwork::Testnet,
+            Network::Testnet4 => BNetwork::Testnet,
             Network::Regtest => BNetwork::Regtest,
             Network::Signet => BNetwork::Signet,
         }

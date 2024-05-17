@@ -38,31 +38,37 @@ esac
 # which network?
 case "${1}" in
 	mainnet)
-		THREADS=$((NPROC * 2))
+		THREADS=$((NPROC / 3))
 		CRONJOB_TIMING="20 4 * * *"
 	;;
 	testnet)
 		NETWORK=testnet
-		THREADS=$((NPROC * 1))
+		THREADS=$((NPROC / 6))
 		CRONJOB_TIMING="2 4 * * *"
+	;;
+	testnet4)
+		NETWORK=testnet4
+		MAGIC=283f161c
+		THREADS=$((NPROC / 6))
+		CRONJOB_TIMING="17 4 * * *"
 	;;
 	signet)
 		NETWORK=signet
-		THREADS=$((NPROC * 1))
+		THREADS=$((NPROC / 6))
 		CRONJOB_TIMING="9 4 * * *"
 	;;
 	liquid)
 		DAEMON=elements
 		NETWORK=liquid
 		FEATURES=liquid
-		THREADS=$((NPROC * 1))
+		THREADS=$((NPROC / 6))
 		CRONJOB_TIMING="12 4 * * *"
 	;;
 	liquidtestnet)
 		DAEMON=elements
 		NETWORK=liquidtestnet
 		FEATURES=liquid
-		THREADS=$((NPROC * 1))
+		THREADS=$((NPROC / 6))
 		CRONJOB_TIMING="17 4 * * *"
 	;;
 	*)
@@ -136,6 +142,7 @@ do
 	# prepare run-time variables
 	UTXOS_LIMIT=500
 	ELECTRUM_TXS_LIMIT=500
+	MAIN_LOOP_DELAY=500
 	DAEMON_CONF="${HOME}/${DAEMON}.conf"
 	HTTP_SOCKET_FILE="${HOME}/socket/esplora-${DAEMON}-${NETWORK}"
 	RPC_SOCKET_FILE="${HOME}/socket/electrum-${DAEMON}-${NETWORK}"
@@ -147,6 +154,23 @@ do
 
 	# override limits based on hostname
 	if [ "${NODENAME}" = "node201" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+		MAIN_LOOP_DELAY=14000
+	fi
+	if [ "${NODENAME}" = "node213" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${NODENAME}" = "node213" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${NETWORK}" = "testnet4" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${LOCATION}" = "fmt" ];then
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 	fi
@@ -168,15 +192,17 @@ do
 		--network "${NETWORK}" \
 		--daemon-dir "${HOME}" \
 		--db-dir "${DB_FOLDER}" \
+		--main-loop-delay "${MAIN_LOOP_DELAY}" \
 		--rpc-socket-file "${RPC_SOCKET_FILE}" \
 		--http-socket-file "${HTTP_SOCKET_FILE}" \
 		--precache-scripts "${POPULAR_SCRIPTS_FILE}" \
 		--precache-threads "${THREADS}" \
 		--cookie "${RPC_USER}:${RPC_PASS}" \
 		--cors '*' \
+		--magic "${MAGIC}" \
 		--address-search \
 		--utxos-limit "${UTXOS_LIMIT}" \
 		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \
-		-vvv
+		-vv
 	sleep 1
 done
