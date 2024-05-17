@@ -295,6 +295,7 @@ pub struct Daemon {
 }
 
 impl Daemon {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         daemon_dir: PathBuf,
         blocks_dir: PathBuf,
