@@ -174,17 +174,16 @@ pub struct BurningInfo {
 pub fn index_confirmed_tx_assets(
     tx: &Transaction,
     confirmed_height: u32,
+    tx_position: u16,
     network: Network,
     parent_network: BNetwork,
     rows: &mut Vec<DBRow>,
 ) {
     let (history, issuances) = index_tx_assets(tx, network, parent_network);
 
-    rows.extend(
-        history.into_iter().map(|(asset_id, info)| {
-            asset_history_row(&asset_id, confirmed_height, info).into_row()
-        }),
-    );
+    rows.extend(history.into_iter().map(|(asset_id, info)| {
+        asset_history_row(&asset_id, confirmed_height, tx_position, info).into_row()
+    }));
 
     // the initial issuance is kept twice: once in the history index under I<asset><height><txid:vin>,
     // and once separately under i<asset> for asset lookup with some more associated metadata.
@@ -336,12 +335,14 @@ fn index_tx_assets(
 fn asset_history_row(
     asset_id: &AssetId,
     confirmed_height: u32,
+    tx_position: u16,
     txinfo: TxHistoryInfo,
 ) -> TxHistoryRow {
     let key = TxHistoryKey {
         code: b'I',
         hash: full_hash(&asset_id.into_inner()[..]),
         confirmed_height,
+        tx_position,
         txinfo,
     };
     TxHistoryRow { key }
