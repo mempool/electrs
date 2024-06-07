@@ -722,6 +722,47 @@ impl ChainQuery {
         newstats
     }
 
+    pub fn stats_limit_height(&self, scripthash: &[u8], flush: DBFlush, specific_height: usize) -> ScriptStats {
+        let _timer = self.start_timer("stats");
+
+        // get the last known stats for the specific height
+        let (newstats, lastblock) = if specific_height > 0 {
+            self.stats_delta(scripthash, ScriptStats::default(), specific_height)
+        } else {
+            // get the last known stats and the blockhash they are updated for.
+            // invalidates the cache if the block was orphaned or if values are out of sync.
+            let cache: Option<(ScriptStats, usize)> = self
+                .store
+                .cache_db
+                .get(&StatsCacheRow::key(scripthash))
+                .map(|c| bincode_util::deserialize_little::<(ScriptStats, BlockHash)>(&c).unwrap())
+                // Check that the values are sane (No negative balances or balances with 0 utxos)
+                .filter(|(stats, _)| stats.is_sane())
+                .and_then(|(stats, blockhash)| {
+                    self.height_by_hash(&blockhash)
+                        .map(|height| (stats, height))
+                });
+
+            // update stats with new transactions since
+            cache.map_or_else(
+                || self.stats_delta(scripthash, ScriptStats::default(), 0),
+                |(oldstats, blockheight)| self.stats_delta(scripthash, oldstats, blockheight + 1),
+            )
+        };
+
+        // save updated stats to cache
+        if let Some(lastblock) = lastblock {
+            if newstats.funded_txo_count + newstats.spent_txo_count > MIN_HISTORY_ITEMS_TO_CACHE {
+                self.store.cache_db.write(
+                    vec![StatsCacheRow::new(scripthash, &newstats, &lastblock).into_row()],
+                    flush,
+                );
+            }
+        }
+
+        newstats
+    }
+
     fn stats_delta(
         &self,
         scripthash: &[u8],

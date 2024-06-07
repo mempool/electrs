@@ -854,6 +854,37 @@ fn handle_request(
             &Method::GET,
             Some(script_type @ &"address"),
             Some(script_str),
+            Some(&"height"),
+            None,
+            None,
+        )
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"height"),
+            None,
+            None,
+        ) => {
+            let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let specific_height = query_params
+                .get("height")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or_default();
+            let stats = query.stats_specific_height(&script_hash[..], specific_height);
+            json_response(
+                json!({
+                    *script_type: script_str,
+                    "chain_stats": stats.0,
+                    "mempool_stats": stats.1,
+                }),
+                TTL_SHORT,
+            )
+        }
+        (
+            &Method::GET,
+            Some(script_type @ &"address"),
+            Some(script_str),
             Some(&"txs"),
             None,
             None,
