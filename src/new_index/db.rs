@@ -69,35 +69,6 @@ impl<'a> Iterator for ReverseScanIterator<'a> {
     }
 }
 
-pub struct RangeScanIterator<'a> {
-    prefix: Vec<u8>,
-    iter: rocksdb::DBIterator<'a>,
-    end_at: Vec<u8>,
-    done: bool,
-}
-
-impl<'a> Iterator for RangeScanIterator<'a> {
-    type Item = DBRow;
-
-    fn next(&mut self) -> Option<DBRow> {
-        if self.done {
-            return None;
-        }
-
-        let (key, value) = self.iter.next().map(Result::ok)??;
-        let key_slice: &[u8] = &key;
-        if key_slice > self.end_at.as_slice() || !key.starts_with(&self.prefix) {
-            self.done = true;
-            return None;
-        }
-
-        Some(DBRow {
-            key: key.to_vec(),
-            value: value.to_vec(),
-        })
-    }
-}
-
 #[derive(Debug)]
 pub struct DB {
     db: rocksdb::DB,
@@ -152,21 +123,6 @@ impl DB {
             iter,
             done: false,
         }
-    }
-
-    pub fn iter_scan_range(&self, prefix: &[u8], start_at: &[u8], end_at:  &[u8]) -> RangeScanIterator {
-        let iter = self.db.iterator(rocksdb::IteratorMode::From(
-            start_at,
-            rocksdb::Direction::Forward,
-        ));
-
-        RangeScanIterator {
-            prefix: prefix.to_vec(),
-            iter,
-            end_at: end_at.to_vec(),
-            done: false,
-        }
-
     }
 
     pub fn iter_scan_reverse(&self, prefix: &[u8], prefix_max: &[u8]) -> ReverseScanIterator {
