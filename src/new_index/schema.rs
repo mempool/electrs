@@ -811,13 +811,19 @@ impl ChainQuery {
                     // confirmed again at a different height
                     .filter(|blockid| blockid.height <= special_height as usize)
                     .map(|blockid| (history, blockid))
-            });
+            }).collect::<Vec<_>>();
+
+        debug!("history_iter len: {}", history_iter.len());
 
         let mut stats = init_stats;
         let mut seen_txids = HashSet::new();
         let mut lastblock = None;
 
         for (history, blockid) in history_iter {
+
+            debug!("history: {:?}",history.key);
+            debug!("blockid: {:?}",blockid);
+
             if lastblock != Some(blockid.hash) {
                 seen_txids.clear();
             }
