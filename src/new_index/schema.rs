@@ -809,7 +809,7 @@ impl ChainQuery {
                 self.tx_confirming_block(&history.get_txid())
                     // drop history entries that were previously confirmed in a re-orged block and later
                     // confirmed again at a different height
-                    .filter(|blockid| blockid.height == special_height as usize)
+                    .filter(|blockid| blockid.height <= special_height as usize)
                     .map(|blockid| (history, blockid))
             });
 
