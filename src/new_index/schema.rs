@@ -821,7 +821,7 @@ impl ChainQuery {
 
         for (history, blockid) in history_iter {
 
-            debug!("history: {:?}",history.key);
+            debug!("history: {:?}",history.key.txinfo);
             debug!("blockid: {:?}",blockid);
 
             if lastblock != Some(blockid.hash) {
