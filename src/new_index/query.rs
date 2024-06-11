@@ -122,7 +122,7 @@ impl Query {
 
     pub fn stats_specific_height(&self, scripthash: &[u8], specific_height: usize) -> (ScriptStats, ScriptStats) {
         (
-            self.chain.stats_limit_height(scripthash, super::db::DBFlush::Enable, specific_height),
+            self.chain.stats_limit_height(scripthash, specific_height),
             self.mempool().stats(scripthash),
         )
     }
