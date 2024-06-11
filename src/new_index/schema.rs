@@ -801,7 +801,8 @@ impl ChainQuery {
         init_stats: ScriptStats,
         special_height: usize,
     ) -> (ScriptStats, Option<BlockHash>) {
-        let _timer = self.start_timer("stats_delta"); // TODO: measure also the number of txns processed.
+        debug!("stats_delta_special_height: {}", special_height);
+        let _timer = self.start_timer("stats_delta_special_height"); // TODO: measure also the number of txns processed.
         let history_iter = self
             .history_iter_scan(b'H', scripthash, special_height)
             .map(TxHistoryRow::from_row)
