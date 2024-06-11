@@ -31,7 +31,7 @@ use crate::util::{
     BlockStatus, Bytes, HeaderEntry, HeaderList, ScriptToAddr,
 };
 
-use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB};
+use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB, RangeScanIterator};
 use crate::new_index::fetch::{start_fetcher, BlockEntry, FetchFrom};
 
 #[cfg(feature = "liquid")]
@@ -505,6 +505,15 @@ impl ChainQuery {
             &TxHistoryRow::prefix_height(code, hash, start_height as u32),
         )
     }
+
+    pub fn history_iter_scan_range(&self, code: u8, hash: &[u8], start_height: usize, end_height: usize) -> RangeScanIterator {
+        self.store.history_db.iter_scan_range(
+            &TxHistoryRow::filter(code, hash),
+            &TxHistoryRow::prefix_height(code, hash, start_height as u32),
+            &TxHistoryRow::prefix_height(code, hash, end_height as u32),
+        )
+    }
+
     fn history_iter_scan_reverse(&self, code: u8, hash: &[u8]) -> ReverseScanIterator {
         self.store.history_db.iter_scan_reverse(
             &TxHistoryRow::filter(code, hash),
@@ -803,7 +812,7 @@ impl ChainQuery {
     ) -> (ScriptStats, Option<BlockHash>) {
         debug!("stats_delta_special_height: {}", special_height);
         let _timer = self.start_timer("stats_delta_special_height"); // TODO: measure also the number of txns processed.
-        let history_iter_raw = self.history_iter_scan(b'H', scripthash, special_height).map(TxHistoryRow::from_row).collect::<Vec<_>>();
+        let history_iter_raw = self.history_iter_scan_range(b'H', scripthash, 0, special_height).map(TxHistoryRow::from_row).collect::<Vec<_>>();
         debug!("history_iter_raw len {}", history_iter_raw.len());
 
         let history_iter = history_iter_raw.into_iter()
