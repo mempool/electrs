@@ -802,14 +802,10 @@ impl ChainQuery {
         init_stats: ScriptStats,
         special_height: usize,
     ) -> (ScriptStats, Option<BlockHash>) {
-        debug!("stats_delta_special_height: {}", special_height);
         let _timer = self.start_timer("stats_delta_special_height"); // TODO: measure also the number of txns processed.
-        let history_iter_raw = self.history_iter_scan(b'H', scripthash, 0).map(TxHistoryRow::from_row).collect::<Vec<_>>();
-        debug!("history_iter_raw len {}", history_iter_raw.len());
-        let history_iter_raw = history_iter_raw.into_iter().filter(|h|h.key.confirmed_height as usize <= special_height).collect::<Vec<_>>();
-        debug!("history_iter_raw len {}", history_iter_raw.len());
-
-        let history_iter = history_iter_raw.into_iter()
+        let history_iter = self.history_iter_scan(b'H', scripthash, 0)
+            .map(TxHistoryRow::from_row)
+            .filter(|history|history.key.confirmed_height as usize <= special_height)
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
                     // drop history entries that were previously confirmed in a re-orged block and later
@@ -818,17 +814,11 @@ impl ChainQuery {
                     .map(|blockid| (history, blockid))
             }).collect::<Vec<_>>();
 
-        debug!("history_iter len: {}", history_iter.len());
-
         let mut stats = init_stats;
         let mut seen_txids = HashSet::new();
         let mut lastblock = None;
 
         for (history, blockid) in history_iter {
-
-            debug!("history: {:?}",history.get_txid());
-            debug!("blockid: {:?}",blockid);
-
             if lastblock != Some(blockid.hash) {
                 seen_txids.clear();
             }
@@ -869,8 +859,6 @@ impl ChainQuery {
 
             lastblock = Some(blockid.hash);
         }
-
-        debug!("lastblock: {:?}", lastblock);
 
         (stats, lastblock)
     }
