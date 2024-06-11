@@ -805,15 +805,13 @@ impl ChainQuery {
         let _timer = self.start_timer("stats_delta_special_height"); // TODO: measure also the number of txns processed.
         let history_iter_raw = self.history_iter_scan(b'H', scripthash, special_height).map(TxHistoryRow::from_row).collect::<Vec<_>>();
         debug!("history_iter_raw len {}", history_iter_raw.len());
-        debug!("history_iter_raw {:?}", history_iter_raw.iter().map(|h|h.get_txid()).collect::<Vec<_>>());
-
 
         let history_iter = history_iter_raw.into_iter()
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
                     // drop history entries that were previously confirmed in a re-orged block and later
                     // confirmed again at a different height
-                    .filter(|blockid| blockid.height <= special_height as usize)
+                    .filter(|blockid| blockid.height == history.key.confirmed_height as usize as usize)
                     .map(|blockid| (history, blockid))
             }).collect::<Vec<_>>();
 
