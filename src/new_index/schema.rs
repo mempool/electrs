@@ -803,9 +803,12 @@ impl ChainQuery {
     ) -> (ScriptStats, Option<BlockHash>) {
         debug!("stats_delta_special_height: {}", special_height);
         let _timer = self.start_timer("stats_delta_special_height"); // TODO: measure also the number of txns processed.
-        let history_iter = self
-            .history_iter_scan(b'H', scripthash, special_height)
-            .map(TxHistoryRow::from_row)
+        let history_iter_raw = self.history_iter_scan(b'H', scripthash, special_height).map(TxHistoryRow::from_row).collect::<Vec<_>>();
+        debug!("history_iter_raw len {}", history_iter_raw.len());
+        debug!("history_iter_raw {:?}", history_iter_raw.iter().map(|h|h.get_txid()).collect::<Vec<_>>());
+
+
+        let history_iter = history_iter_raw.into_iter()
             .filter_map(|history| {
                 self.tx_confirming_block(&history.get_txid())
                     // drop history entries that were previously confirmed in a re-orged block and later
@@ -822,7 +825,7 @@ impl ChainQuery {
 
         for (history, blockid) in history_iter {
 
-            debug!("history: {:?}",history.key.txinfo);
+            debug!("history: {:?}",history.get_txid());
             debug!("blockid: {:?}",blockid);
 
             if lastblock != Some(blockid.hash) {
