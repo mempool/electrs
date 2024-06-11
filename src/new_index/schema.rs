@@ -807,6 +807,7 @@ impl ChainQuery {
         let history_iter_raw = self.history_iter_scan(b'H', scripthash, 0).map(TxHistoryRow::from_row).collect::<Vec<_>>();
         debug!("history_iter_raw len {}", history_iter_raw.len());
         let history_iter_raw = history_iter_raw.into_iter().filter(|h|h.key.confirmed_height as usize <= special_height).collect::<Vec<_>>();
+        debug!("history_iter_raw len {}", history_iter_raw.len());
 
         let history_iter = history_iter_raw.into_iter()
             .filter_map(|history| {
