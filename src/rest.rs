@@ -1046,6 +1046,31 @@ fn handle_request(
             // XXX paging?
             json_response(utxos, TTL_SHORT)
         }
+        (
+            &Method::GET,
+            Some(script_type @ &"address"),
+            Some(script_str),
+            Some(&"utxo"),
+            Some(&"recent"),
+            None,
+        )
+        | (
+            &Method::GET,
+            Some(script_type @ &"scripthash"),
+            Some(script_str),
+            Some(&"utxo"),
+            Some(&"recent"),
+            None,
+        ) => {
+            let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
+            let utxos: Vec<UtxoValue> = query
+                .recent_utxo(&script_hash[..])?
+                .into_iter()
+                .map(UtxoValue::from)
+                .collect();
+            // XXX paging?
+            json_response(utxos, TTL_SHORT)
+        }
         (&Method::GET, Some(&"address-prefix"), Some(prefix), None, None, None) => {
             if !config.address_search {
                 return Err(HttpError::from("address search disabled".to_string()));
