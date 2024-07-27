@@ -189,7 +189,7 @@ impl Connection {
             .chain_err(|| "discovery is disabled")?;
 
         let features = params
-            .get(0)
+            .first()
             .chain_err(|| "missing features param")?
             .clone();
         let features = serde_json::from_value(features).chain_err(|| "invalid features")?;
@@ -203,7 +203,7 @@ impl Connection {
     }
 
     fn blockchain_block_header(&self, params: &[Value]) -> Result<Value> {
-        let height = usize_from_value(params.get(0), "height")?;
+        let height = usize_from_value(params.first(), "height")?;
         let cp_height = usize_from_value_or(params.get(1), "cp_height", 0)?;
 
         let raw_header_hex: String = self
@@ -226,7 +226,7 @@ impl Connection {
     }
 
     fn blockchain_block_headers(&self, params: &[Value]) -> Result<Value> {
-        let start_height = usize_from_value(params.get(0), "start_height")?;
+        let start_height = usize_from_value(params.first(), "start_height")?;
         let count = MAX_HEADERS.min(usize_from_value(params.get(1), "count")?);
         let cp_height = usize_from_value_or(params.get(2), "cp_height", 0)?;
         let heights: Vec<usize> = (start_height..(start_height + count)).collect();
@@ -261,7 +261,7 @@ impl Connection {
     }
 
     fn blockchain_estimatefee(&self, params: &[Value]) -> Result<Value> {
-        let conf_target = usize_from_value(params.get(0), "blocks_count")?;
+        let conf_target = usize_from_value(params.first(), "blocks_count")?;
         let fee_rate = self
             .query
             .estimate_fee(conf_target as u16)
@@ -277,7 +277,7 @@ impl Connection {
     }
 
     fn blockchain_scripthash_subscribe(&mut self, params: &[Value]) -> Result<Value> {
-        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let script_hash = hash_from_value(params.first()).chain_err(|| "bad script_hash")?;
 
         let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
         let status_hash = get_status_hash(history_txids, &self.query)
@@ -295,7 +295,7 @@ impl Connection {
 
     #[cfg(not(feature = "liquid"))]
     fn blockchain_scripthash_get_balance(&self, params: &[Value]) -> Result<Value> {
-        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let script_hash = hash_from_value(params.first()).chain_err(|| "bad script_hash")?;
         let (chain_stats, mempool_stats) = self.query.stats(&script_hash[..]);
 
         Ok(json!({
@@ -305,7 +305,7 @@ impl Connection {
     }
 
     fn blockchain_scripthash_get_history(&self, params: &[Value]) -> Result<Value> {
-        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let script_hash = hash_from_value(params.first()).chain_err(|| "bad script_hash")?;
         let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
 
         Ok(json!(history_txids
@@ -323,7 +323,7 @@ impl Connection {
     }
 
     fn blockchain_scripthash_listunspent(&self, params: &[Value]) -> Result<Value> {
-        let script_hash = hash_from_value(params.get(0)).chain_err(|| "bad script_hash")?;
+        let script_hash = hash_from_value(params.first()).chain_err(|| "bad script_hash")?;
         let utxos = self.query.utxo(&script_hash[..])?;
 
         let to_json = |utxo: Utxo| {
@@ -351,7 +351,7 @@ impl Connection {
     }
 
     fn blockchain_transaction_broadcast(&self, params: &[Value]) -> Result<Value> {
-        let tx = params.get(0).chain_err(|| "missing tx")?;
+        let tx = params.first().chain_err(|| "missing tx")?;
         let tx = tx.as_str().chain_err(|| "non-string tx")?.to_string();
         let txid = self.query.broadcast_raw(&tx)?;
         if let Err(e) = self.chan.sender().try_send(Message::PeriodicUpdate) {
@@ -361,7 +361,7 @@ impl Connection {
     }
 
     fn blockchain_transaction_get(&self, params: &[Value]) -> Result<Value> {
-        let tx_hash = Txid::from(hash_from_value(params.get(0)).chain_err(|| "bad tx_hash")?);
+        let tx_hash = Txid::from(hash_from_value(params.first()).chain_err(|| "bad tx_hash")?);
         let verbose = match params.get(1) {
             Some(value) => value.as_bool().chain_err(|| "non-bool verbose value")?,
             None => false,
@@ -380,7 +380,7 @@ impl Connection {
     }
 
     fn blockchain_transaction_get_merkle(&self, params: &[Value]) -> Result<Value> {
-        let txid = Txid::from(hash_from_value(params.get(0)).chain_err(|| "bad tx_hash")?);
+        let txid = Txid::from(hash_from_value(params.first()).chain_err(|| "bad tx_hash")?);
         let height = usize_from_value(params.get(1), "height")?;
         let blockid = self
             .query
@@ -399,7 +399,7 @@ impl Connection {
     }
 
     fn blockchain_transaction_id_from_pos(&self, params: &[Value]) -> Result<Value> {
-        let height = usize_from_value(params.get(0), "height")?;
+        let height = usize_from_value(params.first(), "height")?;
         let tx_pos = usize_from_value(params.get(1), "tx_pos")?;
         let want_merkle = bool_from_value_or(params.get(2), "merkle", false)?;
 

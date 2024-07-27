@@ -204,10 +204,7 @@ pub fn index_mempool_tx_assets(
 ) {
     let (history, issuances) = index_tx_assets(tx, network, parent_network);
     for (asset_id, info) in history {
-        asset_history
-            .entry(asset_id)
-            .or_insert_with(Vec::new)
-            .push(info);
+        asset_history.entry(asset_id).or_default().push(info);
     }
     for (asset_id, issuance) in issuances {
         asset_issuance.insert(asset_id, issuance);
@@ -386,7 +383,7 @@ pub fn lookup_asset(
     Ok(if let Some(row) = row {
         let reissuance_token = parse_asset_id(&row.reissuance_token);
 
-        let meta = meta.map(Clone::clone).or_else(|| match registry {
+        let meta = meta.cloned().or_else(|| match registry {
             Some(AssetRegistryLock::RwLock(rwlock)) => {
                 rwlock.read().unwrap().get(asset_id).cloned()
             }
