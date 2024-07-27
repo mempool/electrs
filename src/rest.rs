@@ -19,15 +19,15 @@ use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{header::HeaderValue, Body, HeaderMap, Method, Response, Server, StatusCode};
-use prometheus::{HistogramOpts, HistogramVec};
 use itertools::Itertools;
+use prometheus::{HistogramOpts, HistogramVec};
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::{cmp, fs};
 use std::net::IpAddr;
+use std::{cmp, fs};
 #[cfg(feature = "liquid")]
 use {
     crate::elements::{peg::PegoutValue, AssetSorting, IssuanceValue},
