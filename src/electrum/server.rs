@@ -521,18 +521,25 @@ impl Connection {
                     trace!("RPC {:?}", msg);
                     match msg {
                         Message::Request(line) => {
-                            let cmd: Value = from_str(&line).chain_err(|| "invalid JSON format")?;
-                            let reply = match (
-                                cmd.get("method"),
-                                cmd.get("params").unwrap_or(&empty_params),
-                                cmd.get("id"),
-                            ) {
-                                (Some(Value::String(method)), Value::Array(params), Some(id)) => {
-                                    self.handle_command(method, params, id)?
-                                }
-                                _ => bail!("invalid command: {}", cmd),
+                            let cmd: [Value; 1] = [from_str(&line).chain_err(|| "invalid JSON format")?];
+                            let cmds = match &cmd[..] {
+                                [Value::Array(arr)] => arr,
+                                x => x,
                             };
-                            self.send_values(&[reply])?
+                            let mut replies = Vec::with_capacity(cmds.len());
+                            for cmd in cmds {
+                                replies.push(match (
+                                    cmd.get("method"),
+                                    cmd.get("params").unwrap_or(&empty_params),
+                                    cmd.get("id"),
+                                ) {
+                                    (Some(Value::String(method)), Value::Array(params), Some(id)) => {
+                                        self.handle_command(method, params, id)?
+                                    }
+                                    _ => bail!("invalid command: {}", cmd),
+                                });
+                            }
+                            self.send_values(&replies)?
                         }
                         Message::PeriodicUpdate => {
                             let values = self
