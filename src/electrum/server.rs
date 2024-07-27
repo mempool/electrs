@@ -534,9 +534,26 @@ impl Connection {
                                     cmd.get("id"),
                                 ) {
                                     (Some(Value::String(method)), Value::Array(params), Some(id)) => {
-                                        self.handle_command(method, params, id)?
+                                        self.handle_command(method, params, id)
+                                            .unwrap_or_else(|err| {
+                                                json!({
+                                                    "error": {
+                                                        "code": 1,
+                                                        "message": format!("{method} RPC error: {err}")
+                                                    },
+                                                    "id": id,
+                                                    "jsonrpc": "2.0"
+                                                })
+                                            })
                                     }
-                                    _ => bail!("invalid command: {}", cmd),
+                                    _ => json!({
+                                        "error": {
+                                            "code": -32600,
+                                            "message": format!("invalid request: {cmd}")
+                                        },
+                                        "id": null,
+                                        "jsonrpc": "2.0"
+                                    }),
                                 });
                             }
                             self.send_values(&replies)?
