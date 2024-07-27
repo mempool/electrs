@@ -521,42 +521,56 @@ impl Connection {
                     trace!("RPC {:?}", msg);
                     match msg {
                         Message::Request(line) => {
-                            let cmd: [Value; 1] = [from_str(&line).chain_err(|| "invalid JSON format")?];
-                            let cmds = match &cmd[..] {
-                                [Value::Array(arr)] => arr,
-                                x => x,
-                            };
-                            let mut replies = Vec::with_capacity(cmds.len());
-                            for cmd in cmds {
-                                replies.push(match (
-                                    cmd.get("method"),
-                                    cmd.get("params").unwrap_or(&empty_params),
-                                    cmd.get("id"),
-                                ) {
-                                    (Some(Value::String(method)), Value::Array(params), Some(id)) => {
-                                        self.handle_command(method, params, id)
-                                            .unwrap_or_else(|err| {
-                                                json!({
-                                                    "error": {
-                                                        "code": 1,
-                                                        "message": format!("{method} RPC error: {err}")
-                                                    },
-                                                    "id": id,
-                                                    "jsonrpc": "2.0"
+                            if let Ok(json_value) = from_str(&line) {
+                                let json_value: [Value; 1] = [json_value];
+                                let cmds = match &json_value[..] {
+                                    [Value::Array(arr)] => arr,
+                                    x => x,
+                                };
+                                let mut replies = Vec::with_capacity(cmds.len());
+                                for cmd in cmds {
+                                    replies.push(match (
+                                        cmd.get("method"),
+                                        cmd.get("params").unwrap_or(&empty_params),
+                                        cmd.get("id"),
+                                    ) {
+                                        (Some(Value::String(method)), Value::Array(params), Some(id)) => {
+                                            self.handle_command(method, params, id)
+                                                .unwrap_or_else(|err| {
+                                                    json!({
+                                                        "error": {
+                                                            "code": 1,
+                                                            "message": format!("{method} RPC error: {err}")
+                                                        },
+                                                        "id": id,
+                                                        "jsonrpc": "2.0"
+                                                    })
                                                 })
-                                            })
-                                    }
-                                    _ => json!({
+                                        }
+                                        _ => json!({
+                                            "error": {
+                                                "code": -32600,
+                                                "message": format!("invalid request: {cmd}")
+                                            },
+                                            "id": null,
+                                            "jsonrpc": "2.0"
+                                        }),
+                                    });
+                                }
+                                self.send_values(&replies)?
+                            } else {
+                                // serde_json was unable to parse
+                                self.send_values(&[
+                                    json!({
                                         "error": {
                                             "code": -32600,
-                                            "message": format!("invalid request: {cmd}")
+                                            "message": format!("invalid request: {line}")
                                         },
                                         "id": null,
                                         "jsonrpc": "2.0"
-                                    }),
-                                });
+                                    })
+                                ])?
                             }
-                            self.send_values(&replies)?
                         }
                         Message::PeriodicUpdate => {
                             let values = self
