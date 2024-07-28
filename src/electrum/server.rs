@@ -513,7 +513,6 @@ impl Connection {
     }
 
     fn handle_replies(&mut self, shutdown: crossbeam_channel::Receiver<()>) -> Result<()> {
-        let empty_params = json!([]);
         loop {
             crossbeam_channel::select! {
                 recv(self.chan.receiver()) -> msg => {
@@ -521,56 +520,8 @@ impl Connection {
                     trace!("RPC {:?}", msg);
                     match msg {
                         Message::Request(line) => {
-                            if let Ok(json_value) = from_str(&line) {
-                                let json_value: [Value; 1] = [json_value];
-                                let cmds = match &json_value[..] {
-                                    [Value::Array(arr)] => arr,
-                                    x => x,
-                                };
-                                let mut replies = Vec::with_capacity(cmds.len());
-                                for cmd in cmds {
-                                    replies.push(match (
-                                        cmd.get("method"),
-                                        cmd.get("params").unwrap_or(&empty_params),
-                                        cmd.get("id"),
-                                    ) {
-                                        (Some(Value::String(method)), Value::Array(params), Some(id)) => {
-                                            self.handle_command(method, params, id)
-                                                .unwrap_or_else(|err| {
-                                                    json!({
-                                                        "error": {
-                                                            "code": 1,
-                                                            "message": format!("{method} RPC error: {err}")
-                                                        },
-                                                        "id": id,
-                                                        "jsonrpc": "2.0"
-                                                    })
-                                                })
-                                        }
-                                        _ => json!({
-                                            "error": {
-                                                "code": -32600,
-                                                "message": format!("invalid request: {cmd}")
-                                            },
-                                            "id": null,
-                                            "jsonrpc": "2.0"
-                                        }),
-                                    });
-                                }
-                                self.send_values(&replies)?
-                            } else {
-                                // serde_json was unable to parse
-                                self.send_values(&[
-                                    json!({
-                                        "error": {
-                                            "code": -32600,
-                                            "message": format!("invalid request: {line}")
-                                        },
-                                        "id": null,
-                                        "jsonrpc": "2.0"
-                                    })
-                                ])?
-                            }
+                            let result = self.handle_line(&line);
+                            self.send_values(&[result])?
                         }
                         Message::PeriodicUpdate => {
                             let values = self
@@ -589,6 +540,48 @@ impl Connection {
                     return Ok(());
                 }
             }
+        }
+    }
+
+    #[inline]
+    fn handle_line(&mut self, line: &String) -> Value {
+        if let Ok(json_value) = from_str(line) {
+            match json_value {
+                Value::Array(mut arr) => {
+                    for cmd in &mut arr {
+                        // Replace each cmd with its response in-memory.
+                        *cmd = self.handle_value(cmd);
+                    }
+                    Value::Array(arr)
+                }
+                cmd => self.handle_value(&cmd),
+            }
+        } else {
+            // serde_json was unable to parse
+            invalid_json_rpc(line)
+        }
+    }
+
+    #[inline]
+    fn handle_value(&mut self, value: &Value) -> Value {
+        match (
+            value.get("method"),
+            value.get("params").unwrap_or(&json!([])),
+            value.get("id"),
+        ) {
+            (Some(Value::String(method)), Value::Array(params), Some(id)) => self
+                .handle_command(method, params, id)
+                .unwrap_or_else(|err| {
+                    json!({
+                        "error": {
+                            "code": 1,
+                            "message": format!("{method} RPC error: {err}")
+                        },
+                        "id": id,
+                        "jsonrpc": "2.0"
+                    })
+                }),
+            _ => invalid_json_rpc(value),
         }
     }
 
@@ -665,6 +658,18 @@ impl Connection {
             error!("[{}] receiver failed: {}", addr, err);
         }
     }
+}
+
+#[inline]
+fn invalid_json_rpc(input: impl core::fmt::Display) -> Value {
+    json!({
+        "error": {
+            "code": -32600,
+            "message": format!("invalid request: {input}")
+        },
+        "id": null,
+        "jsonrpc": "2.0"
+    })
 }
 
 fn get_history(
