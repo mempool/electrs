@@ -1654,7 +1654,7 @@ impl TxHistoryRow {
     }
 
     fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
-        bincode_util::serialize_big(&(code, full_hash(hash), std::u32::MAX)).unwrap()
+        bincode_util::serialize_big(&(code, full_hash(hash), u32::MAX)).unwrap()
     }
 
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
