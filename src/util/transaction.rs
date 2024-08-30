@@ -123,7 +123,7 @@ pub(super) mod sigops {
             All,
         },
         script::{self, Instruction},
-        Transaction, TxOut, Witness,
+        Transaction, TxIn, TxOut, Witness,
     };
     use std::collections::HashMap;
 
@@ -263,20 +263,23 @@ pub(super) mod sigops {
 
         #[inline]
         fn count_with_prevout(
-            prevout: &TxOut,
-            script_sig: &script::Script,
+            input: &TxIn,
+            script_pubkey: &script::Script,
             witness: &Witness,
         ) -> usize {
             let mut n = 0;
 
-            let script = if prevout.script_pubkey.is_witness_program() {
-                prevout.script_pubkey.clone()
-            } else if prevout.script_pubkey.is_p2sh()
-                && is_push_only(script_sig)
-                && !script_sig.is_empty()
+            let script = if script_pubkey.is_witness_program() {
+                script_pubkey.clone()
+            } else if script_pubkey.is_p2sh()
+                && is_push_only(&input.script_sig)
+                && !input.script_sig.is_empty()
             {
                 script::Script::from_byte_iter(
-                    last_pushdata(script_sig).unwrap().iter().map(|v| Ok(*v)),
+                    last_pushdata(&input.script_sig)
+                        .unwrap()
+                        .iter()
+                        .map(|v| Ok(*v)),
                 )
                 .unwrap()
             } else {
@@ -293,7 +296,31 @@ pub(super) mod sigops {
         }
 
         for (input, prevout) in tx.input.iter().zip(previous_outputs.iter()) {
-            n += count_with_prevout(prevout, &input.script_sig, &input.witness);
+            #[cfg(feature = "liquid")]
+            let (script_pubkey, witness) = {
+                let script_pubkey = if input.is_pegin {
+                    if input.witness.pegin_witness.len() < 4 {
+                        continue;
+                    }
+                    script::Script::from_byte_iter(
+                        input.witness.pegin_witness[3].iter().map(|v| Ok(*v)),
+                    )
+                    .unwrap()
+                } else {
+                    prevout.script_pubkey.clone()
+                };
+
+                (script_pubkey, &input.witness)
+            };
+            #[cfg(not(feature = "liquid"))]
+            let (script_pubkey, witness) = { (&prevout.script_pubkey, &input.witness) };
+
+            n += count_with_prevout(
+                input,
+                #[cfg_attr(not(feature = "liquid"), allow(clippy::needless_borrow))]
+                &script_pubkey,
+                witness,
+            );
         }
         n
     }
