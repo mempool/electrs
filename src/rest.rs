@@ -355,6 +355,8 @@ impl TxOutValue {
             "v0_p2wsh"
         } else if is_v1_p2tr(script) {
             "v1_p2tr"
+        } else if is_anchor(script) {
+            "anchor"
         } else if script.is_provably_unspendable() {
             "provably_unspendable"
         } else if is_bare_multisig(script) {
@@ -403,6 +405,15 @@ fn is_bare_multisig(script: &Script) -> bool {
         && script[len - 2] <= opcodes::all::OP_PUSHNUM_15.into_u8()
         && script[0] >= opcodes::all::OP_PUSHNUM_1.into_u8()
         && script[0] <= script[len - 2]
+}
+
+fn is_anchor(script: &Script) -> bool {
+    let len = script.len();
+    len == 4
+        && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[1] == opcodes::all::OP_PUSHBYTES_2.into_u8()
+        && script[2] == 0x4e
+        && script[3] == 0x73
 }
 
 #[derive(Serialize)]
