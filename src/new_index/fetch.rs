@@ -149,14 +149,33 @@ fn blkfiles_fetcher(
 fn blkfiles_reader(blk_files: Vec<PathBuf>) -> Fetcher<Vec<u8>> {
     let chan = SyncChannel::new(1);
     let sender = chan.sender();
+    let xor_key = blk_files.first().and_then(|p| {
+        let xor_file = p
+            .parent()
+            .expect("blk.dat files must exist in a directory")
+            .join("xor.dat");
+        if xor_file.exists() {
+            Some(fs::read(xor_file).expect("xor.dat exists"))
+        } else {
+            None
+        }
+    });
 
     Fetcher::from(
         chan.into_receiver(),
         spawn_thread("blkfiles_reader", move || {
             for path in blk_files {
                 trace!("reading {:?}", path);
-                let blob = fs::read(&path)
+                let mut blob = fs::read(&path)
                     .unwrap_or_else(|e| panic!("failed to read {:?}: {:?}", path, e));
+
+                // If the xor.dat exists. Use it to decrypt the block files.
+                if let Some(xor_key) = &xor_key {
+                    for (&key, byte) in xor_key.iter().cycle().zip(blob.iter_mut()) {
+                        *byte ^= key;
+                    }
+                }
+
                 sender
                     .send(blob)
                     .unwrap_or_else(|_| panic!("failed to send {:?} contents", path));
