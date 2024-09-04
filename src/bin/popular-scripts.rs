@@ -95,8 +95,7 @@ fn run_iterator(
         "Thread ({thread_id:?}) Seeking DB to beginning of tx histories for b'H' + {}",
         hex::encode([first_byte])
     );
-    // H = 72
-    let mut compare_vec: Vec<u8> = vec![72, first_byte];
+    let mut compare_vec: Vec<u8> = vec![b'H', first_byte];
     iter.seek(&compare_vec); // Seek to beginning of our section
 
     // Insert the byte of the next section for comparing
@@ -122,7 +121,7 @@ fn run_iterator(
     while iter.valid() {
         let key = iter.key().unwrap();
 
-        if is_finished(key) {
+        if key.is_empty() || key[0] != b'H' || is_finished(key) {
             // We have left the txhistory section,
             // but we need to check the final scripthash
             send_if_popular(
