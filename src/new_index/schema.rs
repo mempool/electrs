@@ -1046,7 +1046,7 @@ impl ChainQuery {
                 let txid: Txid = deserialize(&edge.key.spending_txid).unwrap();
                 self.tx_confirming_block(&txid).map(|b| SpendingInput {
                     txid,
-                    vin: edge.key.spending_vin as u32,
+                    vin: edge.key.spending_vin,
                     confirmed: Some(b),
                 })
             })
@@ -1295,7 +1295,7 @@ fn index_transaction(
                 tx_position,
                 TxHistoryInfo::Funding(FundingInfo {
                     txid,
-                    vout: txo_index as u16,
+                    vout: txo_index as u32,
                     value: txo.value,
                 }),
             );
@@ -1322,9 +1322,9 @@ fn index_transaction(
             tx_position,
             TxHistoryInfo::Spending(SpendingInfo {
                 txid,
-                vin: txi_index as u16,
+                vin: txi_index as u32,
                 prev_txid: full_hash(&txi.previous_output.txid[..]),
-                prev_vout: txi.previous_output.vout as u16,
+                prev_vout: txi.previous_output.vout,
                 value: prev_txo.value,
             }),
         );
@@ -1332,9 +1332,9 @@ fn index_transaction(
 
         let edge = TxEdgeRow::new(
             full_hash(&txi.previous_output.txid[..]),
-            txi.previous_output.vout as u16,
+            txi.previous_output.vout,
             txid,
-            txi_index as u16,
+            txi_index as u32,
         );
         rows.push(edge.into_row());
     }
@@ -1455,7 +1455,7 @@ impl TxConfRow {
 struct TxOutKey {
     code: u8,
     txid: FullHash,
-    vout: u16,
+    vout: u32,
 }
 
 struct TxOutRow {
@@ -1469,7 +1469,7 @@ impl TxOutRow {
             key: TxOutKey {
                 code: b'O',
                 txid: *txid,
-                vout: vout as u16,
+                vout: vout as u32,
             },
             value: serialize(txout),
         }
@@ -1478,7 +1478,7 @@ impl TxOutRow {
         bincode_util::serialize_little(&TxOutKey {
             code: b'O',
             txid: full_hash(&outpoint.txid[..]),
-            vout: outpoint.vout as u16,
+            vout: outpoint.vout,
         })
         .unwrap()
     }
@@ -1569,7 +1569,7 @@ impl BlockRow {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FundingInfo {
     pub txid: FullHash,
-    pub vout: u16,
+    pub vout: u32,
     pub value: Value,
 }
 
@@ -1577,9 +1577,9 @@ pub struct FundingInfo {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SpendingInfo {
     pub txid: FullHash, // spending transaction
-    pub vin: u16,
+    pub vin: u32,
     pub prev_txid: FullHash, // funding transaction
-    pub prev_vout: u16,
+    pub prev_vout: u32,
     pub value: Value,
 }
 
@@ -1689,11 +1689,11 @@ impl TxHistoryInfo {
         match self {
             TxHistoryInfo::Funding(ref info) => OutPoint {
                 txid: deserialize(&info.txid).unwrap(),
-                vout: info.vout as u32,
+                vout: info.vout,
             },
             TxHistoryInfo::Spending(ref info) => OutPoint {
                 txid: deserialize(&info.prev_txid).unwrap(),
-                vout: info.prev_vout as u32,
+                vout: info.prev_vout,
             },
             #[cfg(feature = "liquid")]
             TxHistoryInfo::Issuing(_)
@@ -1717,9 +1717,9 @@ pub struct TxHistorySummary {
 struct TxEdgeKey {
     code: u8,
     funding_txid: FullHash,
-    funding_vout: u16,
+    funding_vout: u32,
     spending_txid: FullHash,
-    spending_vin: u16,
+    spending_vin: u32,
 }
 
 struct TxEdgeRow {
@@ -1729,9 +1729,9 @@ struct TxEdgeRow {
 impl TxEdgeRow {
     fn new(
         funding_txid: FullHash,
-        funding_vout: u16,
+        funding_vout: u32,
         spending_txid: FullHash,
-        spending_vin: u16,
+        spending_vin: u32,
     ) -> Self {
         let key = TxEdgeKey {
             code: b'S',
@@ -1745,7 +1745,7 @@ impl TxEdgeRow {
 
     fn filter(outpoint: &OutPoint) -> Bytes {
         // TODO build key without using bincode? [ b"S", &outpoint.txid[..], outpoint.vout?? ].concat()
-        bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout as u16))
+        bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout))
             .unwrap()
     }
 
@@ -1884,7 +1884,7 @@ mod tests {
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                 // vout
-                0, 3,
+                0, 0, 0, 3,
                 // Value variant (Explicit)
                 0, 0, 0, 0, 0, 0, 0, 2,
                 // number of tuple elements
@@ -1901,7 +1901,7 @@ mod tests {
                 0, 0, 0, 1,
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-                0, 3,
+                0, 0, 0, 3,
                 // Value variant (Null)
                 0, 0, 0, 0, 0, 0, 0, 1,
                 // number of tuple elements
@@ -1916,10 +1916,10 @@ mod tests {
                 0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-                0, 12,
+                0, 0, 0, 12,
                 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
                     98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
-                0, 9,
+                0, 0, 0, 9,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 1,
                 14, 0, 0, 0, 0, 0, 0, 0,
@@ -1933,10 +1933,10 @@ mod tests {
                 0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-                0, 12,
+                0, 0, 0, 12,
                 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
                     98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
-                0, 9,
+                0, 0, 0, 9,
                 0, 0, 0, 0, 0, 0, 0, 1,
                 0,
             ],

@@ -61,7 +61,7 @@ impl PegoutValue {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PeginInfo {
     pub txid: FullHash,
-    pub vin: u16,
+    pub vin: u32,
     pub value: u64,
 }
 
@@ -70,6 +70,6 @@ pub struct PeginInfo {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PegoutInfo {
     pub txid: FullHash,
-    pub vout: u16,
+    pub vout: u32,
     pub value: u64,
 }

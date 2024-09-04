@@ -48,7 +48,7 @@ impl From<Option<BlockId>> for TransactionStatus {
 #[derive(Serialize, Deserialize)]
 pub struct TxInput {
     pub txid: Txid,
-    pub vin: u16,
+    pub vin: u32,
 }
 
 pub fn is_coinbase(txin: &TxIn) -> bool {
