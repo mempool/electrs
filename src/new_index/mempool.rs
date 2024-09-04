@@ -210,7 +210,7 @@ impl Mempool {
 
                     Some(Utxo {
                         txid: deserialize(&info.txid).expect("invalid txid"),
-                        vout: info.vout as u32,
+                        vout: info.vout,
                         value: info.value,
                         confirmed: None,
 
@@ -407,7 +407,7 @@ impl Mempool {
     }
 
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) -> Result<()> {
-        if self.txstore.get(txid).is_none() {
+        if !self.txstore.contains_key(txid) {
             if let Ok(tx) = daemon.getmempooltx(txid) {
                 if self.add(vec![tx]) == 0 {
                     return Err(format!(
@@ -495,9 +495,9 @@ impl Mempool {
                     compute_script_hash(&prevout.script_pubkey),
                     TxHistoryInfo::Spending(SpendingInfo {
                         txid: txid_bytes,
-                        vin: input_index as u16,
+                        vin: input_index,
                         prev_txid: full_hash(&txi.previous_output.txid[..]),
-                        prev_vout: txi.previous_output.vout as u16,
+                        prev_vout: txi.previous_output.vout,
                         value: prevout.value,
                     }),
                 )
@@ -516,7 +516,7 @@ impl Mempool {
                         compute_script_hash(&txo.script_pubkey),
                         TxHistoryInfo::Funding(FundingInfo {
                             txid: txid_bytes,
-                            vout: index as u16,
+                            vout: index as u32,
                             value: txo.value,
                         }),
                     )
@@ -524,10 +524,7 @@ impl Mempool {
 
             // Index funding/spending history entries and spend edges
             for (scripthash, entry) in funding.chain(spending) {
-                self.history
-                    .entry(scripthash)
-                    .or_insert_with(Vec::new)
-                    .push(entry);
+                self.history.entry(scripthash).or_default().push(entry);
             }
             for (i, txi) in tx.input.iter().enumerate() {
                 self.edges.insert(txi.previous_output, (txid, i as u32));

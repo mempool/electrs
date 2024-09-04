@@ -48,7 +48,7 @@ impl From<Option<BlockId>> for TransactionStatus {
 #[derive(Serialize, Deserialize)]
 pub struct TxInput {
     pub txid: Txid,
-    pub vin: u16,
+    pub vin: u32,
 }
 
 pub fn is_coinbase(txin: &TxIn) -> bool {
@@ -340,18 +340,12 @@ pub(super) mod sigops {
         let last_witness = witness.last();
         match (witness_version, witness_program.len()) {
             (0, 20) => 1,
-            (0, 32) => {
-                if let Some(n) = last_witness
-                    .map(|sl| sl.iter().map(|v| Ok(*v)))
-                    .map(script::Script::from_byte_iter)
-                    // I only return Ok 2 lines up, so there is no way to error
-                    .map(|s| count_sigops(&s.unwrap(), true))
-                {
-                    n
-                } else {
-                    0
-                }
-            }
+            (0, 32) => last_witness
+                .map(|sl| sl.iter().map(|v| Ok(*v)))
+                .map(script::Script::from_byte_iter)
+                // I only return Ok 2 lines up, so there is no way to error
+                .map(|s| count_sigops(&s.unwrap(), true))
+                .unwrap_or_default(),
             _ => 0,
         }
     }
