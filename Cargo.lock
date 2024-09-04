@@ -1109,8 +1109,7 @@ checksum = "cf7e6d18738ecd0902d30d1ad232c9125985a3422929b16c65517b38adc14f96"
 [[package]]
 name = "proxy-protocol"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e50c72c21c738f5c5f350cc33640aee30bf7cd20f9d9da20ed41bce2671d532"
+source = "git+https://github.com/junderw/proxy-protocol?rev=5f5431ecdae75c7e8aba0f7aebcfc2e0102b70dc#5f5431ecdae75c7e8aba0f7aebcfc2e0102b70dc"
 dependencies = [
  "bytes",
  "snafu",

@@ -1424,13 +1424,12 @@ mod tests {
                 Ok(82),
             ),
             // Capacity exactly on the last byte of v1 == parser error (library)
-            // TODO: make PR for upstream
-            // (
-            //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
-            //     47, // 1 bytes before v1 header ends (just befor \n)
-            //     &simple_json,
-            //     Ok(82),
-            // ),
+            (
+                [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+                47, // 1 bytes before v1 header ends (just befor \n)
+                &simple_json,
+                Ok(82),
+            ),
             // TODO: When the BufReader boundary hits in a v2 PROXY header it crashes
             // (
             //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
@@ -1438,13 +1437,12 @@ mod tests {
             //     &simple_json,
             //     Ok(82),
             // ),
-            // TODO: make PR for upstream to bail when TLV is cut short
-            // (
-            //     [v1.clone(), v2.clone(), simple_json.clone()].concat(),
-            //     77, // 2 bytes short of v2 ending
-            //     &simple_json,
-            //     Ok(82),
-            // ),
+            (
+                [v1.clone(), v2.clone(), simple_json.clone()].concat(),
+                77, // 2 bytes short of v2 ending
+                &simple_json,
+                Ok(82),
+            ),
             (
                 [v1.clone(), v2.clone(), larger_json.clone()].concat(),
                 80, // 1 after v2 ends

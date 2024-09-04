@@ -79,3 +79,7 @@ codegen-units = 1
 [patch.crates-io.electrum-client]
 git = "https://github.com/Blockstream/rust-electrum-client"
 rev = "d3792352992a539afffbe11501d1aff9fd5b919d" # add-peer branch
+
+[patch.crates-io.proxy-protocol]
+git = "https://github.com/junderw/proxy-protocol"
+rev = "5f5431ecdae75c7e8aba0f7aebcfc2e0102b70dc" # fix/eof-panics branch
