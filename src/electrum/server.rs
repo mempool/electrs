@@ -99,6 +99,21 @@ fn get_status_hash(txs: Vec<(Txid, Option<BlockId>)>, query: &Query) -> Option<F
     }
 }
 
+#[repr(i16)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsonRpcV2Error {
+    ParseError = -32700,
+    InvalidRequest = -32600,
+    MethodNotFound = -32601,
+    InternalError = -32603,
+}
+impl JsonRpcV2Error {
+    #[inline]
+    fn into_i16(self) -> i16 {
+        self as i16
+    }
+}
+
 struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
@@ -447,7 +462,14 @@ impl Connection {
             #[cfg(feature = "electrum-discovery")]
             "server.add_peer" => self.server_add_peer(params),
 
-            &_ => bail!("unknown method {} {:?}", method, params),
+            &_ => {
+                warn!("rpc unknown method #{} {} {:?}", id, method, params);
+                return Ok(json_rpc_error(
+                    format!("Method {method} not found"),
+                    Some(id),
+                    JsonRpcV2Error::MethodNotFound,
+                ));
+            }
         };
         timer.observe_duration();
         // TODO: return application errors should be sent to the client
@@ -461,7 +483,7 @@ impl Connection {
                     params,
                     e.display_chain()
                 );
-                json!({"jsonrpc": "2.0", "id": id, "error": format!("{}", e)})
+                json_rpc_error(e, Some(id), JsonRpcV2Error::InternalError)
             }
         })
     }
@@ -558,7 +580,11 @@ impl Connection {
             }
         } else {
             // serde_json was unable to parse
-            invalid_json_rpc(line)
+            json_rpc_error(
+                format!("Invalid JSON: {line}"),
+                None,
+                JsonRpcV2Error::ParseError,
+            )
         }
     }
 
@@ -572,16 +598,14 @@ impl Connection {
             (Some(Value::String(method)), Value::Array(params), Some(id)) => self
                 .handle_command(method, params, id)
                 .unwrap_or_else(|err| {
-                    json!({
-                        "error": {
-                            "code": 1,
-                            "message": format!("{method} RPC error: {err}")
-                        },
-                        "id": id,
-                        "jsonrpc": "2.0"
-                    })
+                    json_rpc_error(
+                        format!("{method} RPC error: {err}"),
+                        Some(id),
+                        JsonRpcV2Error::InternalError,
+                    )
                 }),
-            _ => invalid_json_rpc(value),
+            (_, _, Some(id)) => json_rpc_error(value, Some(id), JsonRpcV2Error::InvalidRequest),
+            _ => json_rpc_error(value, None, JsonRpcV2Error::InvalidRequest),
         }
     }
 
@@ -661,15 +685,22 @@ impl Connection {
 }
 
 #[inline]
-fn invalid_json_rpc(input: impl core::fmt::Display) -> Value {
-    json!({
+fn json_rpc_error(
+    input: impl core::fmt::Display,
+    id: Option<&Value>,
+    code: JsonRpcV2Error,
+) -> Value {
+    let mut ret = json!({
         "error": {
-            "code": -32600,
-            "message": format!("invalid request: {input}")
+            "code": code.into_i16(),
+            "message": format!("{input}")
         },
-        "id": null,
         "jsonrpc": "2.0"
-    })
+    });
+    if let (Some(id), Some(obj)) = (id, ret.as_object_mut()) {
+        obj.insert(String::from("id"), id.clone());
+    }
+    ret
 }
 
 fn get_history(
