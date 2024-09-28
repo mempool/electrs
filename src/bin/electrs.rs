@@ -50,6 +50,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         config.daemon_rpc_addr,
         config.cookie_getter(),
         config.network_type,
+        config.magic,
         signal.clone(),
         &metrics,
     )?);
@@ -74,7 +75,18 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         &metrics,
         Arc::clone(&config),
     )));
-    mempool.write().unwrap().update(&daemon)?;
+    loop {
+        match Mempool::update(&mempool, &daemon) {
+            Ok(_) => break,
+            Err(e) => {
+                warn!(
+                    "Error performing initial mempool update, trying again in 5 seconds: {}",
+                    e.display_chain()
+                );
+                signal.wait(Duration::from_secs(5), false)?;
+            }
+        }
+    }
 
     #[cfg(feature = "liquid")]
     let asset_db = config.asset_db_path.as_ref().map(|db_dir| {
@@ -136,7 +148,13 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         };
 
         // Update mempool
-        mempool.write().unwrap().update(&daemon)?;
+        if let Err(e) = Mempool::update(&mempool, &daemon) {
+            // Log the error if the result is an Err
+            warn!(
+                "Error updating mempool, skipping mempool update: {}",
+                e.display_chain()
+            );
+        }
 
         // Update subscribed clients
         electrum_server.notify();

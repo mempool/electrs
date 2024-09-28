@@ -43,6 +43,11 @@ case "${1}" in
 		NETWORK=testnet
 		THREADS=$((NPROC / 6))
 	;;
+	testnet4)
+		NETWORK=testnet4
+		MAGIC=283f161c
+		THREADS=$((NPROC / 6))
+	;;
 	signet)
 		NETWORK=signet
 		THREADS=$((NPROC / 6))
@@ -60,7 +65,7 @@ case "${1}" in
 		THREADS=$((NPROC / 6))
 	;;
 	*)
-		echo "Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet)"
+		echo "Usage: $0 (mainnet|testnet|testnet4|signet|liquid|liquidtestnet)"
 		exit 1
 	;;
 esac
@@ -92,6 +97,22 @@ do
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 		MAIN_LOOP_DELAY=14000
+	fi
+	if [ "${NODENAME}" = "node213" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${NODENAME}" = "node213" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${NETWORK}" = "testnet4" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
+	fi
+	if [ "${LOCATION}" = "fmt" ];then
+		UTXOS_LIMIT=9000
+		ELECTRUM_TXS_LIMIT=9000
 	fi
 
 	# Run the popular address txt file generator before each run
@@ -136,6 +157,7 @@ do
 		--precache-threads "${THREADS}" \
 		--cookie "${RPC_USER}:${RPC_PASS}" \
 		--cors '*' \
+		--magic "${MAGIC}" \
 		--address-search \
 		--utxos-limit "${UTXOS_LIMIT}" \
 		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \

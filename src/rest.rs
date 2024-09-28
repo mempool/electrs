@@ -355,6 +355,8 @@ impl TxOutValue {
             "v0_p2wsh"
         } else if is_v1_p2tr(script) {
             "v1_p2tr"
+        } else if is_anchor(script) {
+            "anchor"
         } else if script.is_provably_unspendable() {
             "provably_unspendable"
         } else if is_bare_multisig(script) {
@@ -403,6 +405,15 @@ fn is_bare_multisig(script: &Script) -> bool {
         && script[len - 2] <= opcodes::all::OP_PUSHNUM_15.into_u8()
         && script[0] >= opcodes::all::OP_PUSHNUM_1.into_u8()
         && script[0] <= script[len - 2]
+}
+
+fn is_anchor(script: &Script) -> bool {
+    let len = script.len();
+    len == 4
+        && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[1] == opcodes::all::OP_PUSHBYTES_2.into_u8()
+        && script[2] == 0x4e
+        && script[3] == 0x73
 }
 
 #[derive(Serialize)]
@@ -933,7 +944,7 @@ fn handle_request(
                 _ => "",
             };
             let script_hashes: Vec<[u8; 32]> = query_params
-                .get(&script_types.to_string())
+                .get(*script_types)
                 .ok_or(HttpError::from(format!("No {} specified", script_types)))?
                 .as_str()
                 .split(',')
@@ -1085,7 +1096,7 @@ fn handle_request(
                 _ => "",
             };
             let script_hashes: Vec<[u8; 32]> = query_params
-                .get(&script_types.to_string())
+                .get(*script_types)
                 .ok_or(HttpError::from(format!("No {} specified", script_types)))?
                 .as_str()
                 .split(',')
@@ -1321,6 +1332,48 @@ fn handle_request(
                 .broadcast_raw(&txhex)
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
             http_message(StatusCode::OK, txid.to_hex(), 0)
+        }
+        (&Method::POST, Some(&"txs"), Some(&"test"), None, None, None) => {
+            let txhexes: Vec<String> =
+                serde_json::from_str(String::from_utf8(body.to_vec())?.as_str())?;
+
+            if txhexes.len() > 25 {
+                Result::Err(HttpError::from(
+                    "Exceeded maximum of 25 transactions".to_string(),
+                ))?
+            }
+
+            let maxfeerate = query_params
+                .get("maxfeerate")
+                .map(|s| {
+                    s.parse::<f64>()
+                        .map_err(|_| HttpError::from("Invalid maxfeerate".to_string()))
+                })
+                .transpose()?;
+
+            // pre-checks
+            txhexes.iter().enumerate().try_for_each(|(index, txhex)| {
+                // each transaction must be of reasonable size (more than 60 bytes, within 400kWU standardness limit)
+                if !(120..800_000).contains(&txhex.len()) {
+                    Result::Err(HttpError::from(format!(
+                        "Invalid transaction size for item {}",
+                        index
+                    )))
+                } else {
+                    // must be a valid hex string
+                    Vec::<u8>::from_hex(txhex)
+                        .map_err(|_| {
+                            HttpError::from(format!("Invalid transaction hex for item {}", index))
+                        })
+                        .map(|_| ())
+                }
+            })?;
+
+            let result = query
+                .test_mempool_accept(txhexes, maxfeerate)
+                .map_err(|err| HttpError::from(err.description().to_string()))?;
+
+            json_response(result, TTL_SHORT)
         }
         (&Method::GET, Some(&"txs"), Some(&"outspends"), None, None, None) => {
             let txid_strings: Vec<&str> = query_params
@@ -1746,7 +1799,10 @@ fn address_to_scripthash(addr: &str, network: Network) -> Result<FullHash, HttpE
         // `addr_network` will be detected as Testnet for all of them.
         addr_network == network
             || (addr_network == Network::Testnet
-                && matches!(network, Network::Regtest | Network::Signet))
+                && matches!(
+                    network,
+                    Network::Regtest | Network::Signet | Network::Testnet4
+                ))
     };
 
     #[cfg(feature = "liquid")]

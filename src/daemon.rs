@@ -117,6 +117,26 @@ struct NetworkInfo {
     relayfee: f64, // in BTC/kB
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct MempoolFees {
+    base: f64,
+    #[serde(rename = "effective-feerate")]
+    effective_feerate: f64,
+    #[serde(rename = "effective-includes")]
+    effective_includes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MempoolAcceptResult {
+    txid: String,
+    wtxid: String,
+    allowed: Option<bool>,
+    vsize: Option<u32>,
+    fees: Option<MempoolFees>,
+    #[serde(rename = "reject-reason")]
+    reject_reason: Option<String>,
+}
+
 pub trait CookieGetter: Send + Sync {
     fn get(&self) -> Result<Vec<u8>>;
 }
@@ -264,6 +284,7 @@ pub struct Daemon {
     daemon_dir: PathBuf,
     blocks_dir: PathBuf,
     network: Network,
+    magic: Option<u32>,
     conn: Mutex<Connection>,
     message_id: Counter, // for monotonic JSONRPC 'id'
     signal: Waiter,
@@ -274,12 +295,14 @@ pub struct Daemon {
 }
 
 impl Daemon {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         daemon_dir: PathBuf,
         blocks_dir: PathBuf,
         daemon_rpc_addr: SocketAddr,
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
+        magic: Option<u32>,
         signal: Waiter,
         metrics: &Metrics,
     ) -> Result<Daemon> {
@@ -287,6 +310,7 @@ impl Daemon {
             daemon_dir,
             blocks_dir,
             network,
+            magic,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
                 cookie_getter,
@@ -321,10 +345,10 @@ impl Daemon {
             let mempool = daemon.getmempoolinfo()?;
 
             let ibd_done = if network.is_regtest() {
-                info.blocks == 0 && info.headers == 0
+                info.blocks == info.headers
             } else {
-                false
-            } || !info.initialblockdownload.unwrap_or(false);
+                !info.initialblockdownload.unwrap_or(false)
+            };
 
             if mempool.loaded && ibd_done && info.blocks == info.headers {
                 break;
@@ -347,6 +371,7 @@ impl Daemon {
             daemon_dir: self.daemon_dir.clone(),
             blocks_dir: self.blocks_dir.clone(),
             network: self.network,
+            magic: self.magic,
             conn: Mutex::new(self.conn.lock().unwrap().reconnect()?),
             message_id: Counter::new(),
             signal: self.signal.clone(),
@@ -367,7 +392,7 @@ impl Daemon {
     }
 
     pub fn magic(&self) -> u32 {
-        self.network.magic()
+        self.magic.unwrap_or_else(|| self.network.magic())
     }
 
     fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
@@ -580,6 +605,20 @@ impl Daemon {
         let txid = self.request("sendrawtransaction", json!([txhex]))?;
         Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
             .chain_err(|| "failed to parse txid")
+    }
+
+    pub fn test_mempool_accept(
+        &self,
+        txhex: Vec<String>,
+        maxfeerate: Option<f64>,
+    ) -> Result<Vec<MempoolAcceptResult>> {
+        let params = match maxfeerate {
+            Some(rate) => json!([txhex, format!("{:.8}", rate)]),
+            None => json!([txhex]),
+        };
+        let result = self.request("testmempoolaccept", params)?;
+        serde_json::from_value::<Vec<MempoolAcceptResult>>(result)
+            .chain_err(|| "invalid testmempoolaccept reply")
     }
 
     // Get estimated feerates for the provided confirmation targets using a batch RPC request

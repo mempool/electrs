@@ -5,7 +5,11 @@ use std::path::Path;
 use crate::config::Config;
 use crate::util::{bincode_util, Bytes};
 
-static DB_VERSION: u32 = 1;
+/// Each version will break any running instance with a DB that has a differing version.
+/// It will also break if light mode is enabled or disabled.
+// 1 = Original DB (since fork from Blockstream)
+// 2 = Add tx position to TxHistory rows and place Spending before Funding
+static DB_VERSION: u32 = 2;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct DBRow {

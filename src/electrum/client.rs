@@ -3,7 +3,6 @@ use std::convert::TryFrom;
 
 use bitcoin::hashes::Hash;
 pub use electrum_client::client::Client;
-pub use electrum_client::Error as ElectrumError;
 pub use electrum_client::ServerFeaturesRes;
 
 use crate::chain::BlockHash;

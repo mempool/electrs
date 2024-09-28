@@ -540,21 +540,21 @@ impl ChainQuery {
         // collate utxo funding/spending events by transaction
 
         let rows = iter
-            .map(|row| (row.get_txid(), row.key.txinfo))
-            .skip_while(|(txid, _)| {
+            .map(|row| (row.get_txid(), row.key.txinfo, row.key.tx_position))
+            .skip_while(|(txid, _, _)| {
                 // skip until we reach the last_seen_txid
                 last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
             })
-            .skip_while(|(txid, _)| {
+            .skip_while(|(txid, _, _)| {
                 // skip the last_seen_txid itself
                 last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid == txid)
             })
-            .filter_map(|(txid, info)| {
+            .filter_map(|(txid, info, tx_position)| {
                 self.tx_confirming_block(&txid)
-                    .map(|b| (txid, info, b.height, b.time))
+                    .map(|b| (txid, info, b.height, b.time, tx_position))
             });
         let mut map: HashMap<Txid, TxHistorySummary> = HashMap::new();
-        for (txid, info, height, time) in rows {
+        for (txid, info, height, time, tx_position) in rows {
             if !map.contains_key(&txid) && map.len() == limit {
                 break;
             }
@@ -570,6 +570,7 @@ impl ChainQuery {
                             value: info.value.try_into().unwrap_or(0),
                             height,
                             time,
+                            tx_position,
                         });
                 }
                 #[cfg(not(feature = "liquid"))]
@@ -583,6 +584,7 @@ impl ChainQuery {
                             value: 0_i64.saturating_sub(info.value.try_into().unwrap_or(0)),
                             height,
                             time,
+                            tx_position,
                         });
                 }
                 #[cfg(feature = "liquid")]
@@ -592,6 +594,7 @@ impl ChainQuery {
                         value: 0,
                         height,
                         time,
+                        tx_position,
                     });
                 }
                 #[cfg(feature = "liquid")]
@@ -601,6 +604,7 @@ impl ChainQuery {
                         value: 0,
                         height,
                         time,
+                        tx_position,
                     });
                 }
                 #[cfg(feature = "liquid")]
@@ -610,7 +614,11 @@ impl ChainQuery {
         let mut tx_summaries = map.into_values().collect::<Vec<TxHistorySummary>>();
         tx_summaries.sort_by(|a, b| {
             if a.height == b.height {
-                a.value.cmp(&b.value)
+                if a.tx_position == b.tx_position {
+                    a.value.cmp(&b.value)
+                } else {
+                    b.tx_position.cmp(&a.tx_position)
+                }
             } else {
                 b.height.cmp(&a.height)
             }
@@ -1136,7 +1144,7 @@ impl ChainQuery {
                 let txid: Txid = deserialize(&edge.key.spending_txid).unwrap();
                 self.tx_confirming_block(&txid).map(|b| SpendingInput {
                     txid,
-                    vin: edge.key.spending_vin as u32,
+                    vin: edge.key.spending_vin,
                     confirmed: Some(b),
                 })
             })
@@ -1344,9 +1352,16 @@ fn index_blocks(
         .par_iter() // serialization is CPU-intensive
         .map(|b| {
             let mut rows = vec![];
-            for tx in &b.block.txdata {
+            for (idx, tx) in b.block.txdata.iter().enumerate() {
                 let height = b.entry.height() as u32;
-                index_transaction(tx, height, previous_txos_map, &mut rows, iconfig);
+                index_transaction(
+                    tx,
+                    height,
+                    idx as u16,
+                    previous_txos_map,
+                    &mut rows,
+                    iconfig,
+                );
             }
             rows.push(BlockRow::new_done(full_hash(&b.entry.hash()[..])).into_row()); // mark block as "indexed"
             rows
@@ -1359,13 +1374,14 @@ fn index_blocks(
 fn index_transaction(
     tx: &Transaction,
     confirmed_height: u32,
+    tx_position: u16,
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     rows: &mut Vec<DBRow>,
     iconfig: &IndexerConfig,
 ) {
     // persist history index:
-    //      H{funding-scripthash}{funding-height}F{funding-txid:vout} → ""
-    //      H{funding-scripthash}{spending-height}S{spending-txid:vin}{funding-txid:vout} → ""
+    //      H{funding-scripthash}{spending-height}{spending-block-pos}S{spending-txid:vin}{funding-txid:vout} → ""
+    //      H{funding-scripthash}{funding-height}{funding-block-pos}F{funding-txid:vout} → ""
     // persist "edges" for fast is-this-TXO-spent check
     //      S{funding-txid:vout}{spending-txid:vin} → ""
     let txid = full_hash(&tx.txid()[..]);
@@ -1374,9 +1390,10 @@ fn index_transaction(
             let history = TxHistoryRow::new(
                 &txo.script_pubkey,
                 confirmed_height,
+                tx_position,
                 TxHistoryInfo::Funding(FundingInfo {
                     txid,
-                    vout: txo_index as u16,
+                    vout: txo_index as u32,
                     value: txo.value,
                 }),
             );
@@ -1400,11 +1417,12 @@ fn index_transaction(
         let history = TxHistoryRow::new(
             &prev_txo.script_pubkey,
             confirmed_height,
+            tx_position,
             TxHistoryInfo::Spending(SpendingInfo {
                 txid,
-                vin: txi_index as u16,
+                vin: txi_index as u32,
                 prev_txid: full_hash(&txi.previous_output.txid[..]),
-                prev_vout: txi.previous_output.vout as u16,
+                prev_vout: txi.previous_output.vout,
                 value: prev_txo.value,
             }),
         );
@@ -1412,9 +1430,9 @@ fn index_transaction(
 
         let edge = TxEdgeRow::new(
             full_hash(&txi.previous_output.txid[..]),
-            txi.previous_output.vout as u16,
+            txi.previous_output.vout,
             txid,
-            txi_index as u16,
+            txi_index as u32,
         );
         rows.push(edge.into_row());
     }
@@ -1424,6 +1442,7 @@ fn index_transaction(
     asset::index_confirmed_tx_assets(
         tx,
         confirmed_height,
+        tx_position,
         iconfig.network,
         iconfig.parent_network,
         rows,
@@ -1534,7 +1553,7 @@ impl TxConfRow {
 struct TxOutKey {
     code: u8,
     txid: FullHash,
-    vout: u16,
+    vout: u32,
 }
 
 struct TxOutRow {
@@ -1548,7 +1567,7 @@ impl TxOutRow {
             key: TxOutKey {
                 code: b'O',
                 txid: *txid,
-                vout: vout as u16,
+                vout: vout as u32,
             },
             value: serialize(txout),
         }
@@ -1557,7 +1576,7 @@ impl TxOutRow {
         bincode_util::serialize_little(&TxOutKey {
             code: b'O',
             txid: full_hash(&outpoint.txid[..]),
-            vout: outpoint.vout as u16,
+            vout: outpoint.vout,
         })
         .unwrap()
     }
@@ -1648,7 +1667,7 @@ impl BlockRow {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FundingInfo {
     pub txid: FullHash,
-    pub vout: u16,
+    pub vout: u32,
     pub value: Value,
 }
 
@@ -1656,17 +1675,20 @@ pub struct FundingInfo {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct SpendingInfo {
     pub txid: FullHash, // spending transaction
-    pub vin: u16,
+    pub vin: u32,
     pub prev_txid: FullHash, // funding transaction
-    pub prev_vout: u16,
+    pub prev_vout: u32,
     pub value: Value,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TxHistoryInfo {
-    Funding(FundingInfo),
+    // If a spend and a fund for the same scripthash
+    // occur in the same tx, spends should come first.
+    // This ordering comes from the enum order.
     Spending(SpendingInfo),
+    Funding(FundingInfo),
 
     #[cfg(feature = "liquid")]
     Issuing(asset::IssuingInfo),
@@ -1700,6 +1722,7 @@ pub struct TxHistoryKey {
     pub code: u8,              // H for script history or I for asset history (elements only)
     pub hash: FullHash, // either a scripthash (always on bitcoin) or an asset id (elements only)
     pub confirmed_height: u32, // MUST be serialized as big-endian (for correct scans).
+    pub tx_position: u16, // MUST be serialized as big-endian (for correct scans). Position in block.
     pub txinfo: TxHistoryInfo,
 }
 
@@ -1708,11 +1731,17 @@ pub struct TxHistoryRow {
 }
 
 impl TxHistoryRow {
-    fn new(script: &Script, confirmed_height: u32, txinfo: TxHistoryInfo) -> Self {
+    fn new(
+        script: &Script,
+        confirmed_height: u32,
+        tx_position: u16,
+        txinfo: TxHistoryInfo,
+    ) -> Self {
         let key = TxHistoryKey {
             code: b'H',
             hash: compute_script_hash(script),
             confirmed_height,
+            tx_position,
             txinfo,
         };
         TxHistoryRow { key }
@@ -1723,7 +1752,7 @@ impl TxHistoryRow {
     }
 
     fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
-        bincode_util::serialize_big(&(code, full_hash(hash), std::u32::MAX)).unwrap()
+        bincode_util::serialize_big(&(code, full_hash(hash), u32::MAX)).unwrap()
     }
 
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
@@ -1758,11 +1787,11 @@ impl TxHistoryInfo {
         match self {
             TxHistoryInfo::Funding(ref info) => OutPoint {
                 txid: deserialize(&info.txid).unwrap(),
-                vout: info.vout as u32,
+                vout: info.vout,
             },
             TxHistoryInfo::Spending(ref info) => OutPoint {
                 txid: deserialize(&info.prev_txid).unwrap(),
-                vout: info.prev_vout as u32,
+                vout: info.prev_vout,
             },
             #[cfg(feature = "liquid")]
             TxHistoryInfo::Issuing(_)
@@ -1779,15 +1808,16 @@ pub struct TxHistorySummary {
     height: usize,
     value: i64,
     time: u32,
+    tx_position: u16,
 }
 
 #[derive(Serialize, Deserialize)]
 struct TxEdgeKey {
     code: u8,
     funding_txid: FullHash,
-    funding_vout: u16,
+    funding_vout: u32,
     spending_txid: FullHash,
-    spending_vin: u16,
+    spending_vin: u32,
 }
 
 struct TxEdgeRow {
@@ -1797,9 +1827,9 @@ struct TxEdgeRow {
 impl TxEdgeRow {
     fn new(
         funding_txid: FullHash,
-        funding_vout: u16,
+        funding_vout: u32,
         spending_txid: FullHash,
-        spending_vin: u16,
+        spending_vin: u32,
     ) -> Self {
         let key = TxEdgeKey {
             code: b'S',
@@ -1813,7 +1843,7 @@ impl TxEdgeRow {
 
     fn filter(outpoint: &OutPoint) -> Bytes {
         // TODO build key without using bincode? [ b"S", &outpoint.txid[..], outpoint.vout?? ].concat()
-        bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout as u16))
+        bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout))
             .unwrap()
     }
 
@@ -1943,14 +1973,16 @@ mod tests {
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 // confirmed_height
                 0, 0, 0, 2,
+                // tx_position
+                0, 3,
                 // TxHistoryInfo variant (Funding)
-                0, 0, 0, 0,
+                0, 0, 0, 1,
                 // FundingInfo
                 // txid
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                 // vout
-                0, 3,
+                0, 0, 0, 3,
                 // Value variant (Explicit)
                 0, 0, 0, 0, 0, 0, 0, 2,
                 // number of tuple elements
@@ -1963,10 +1995,11 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 0,
+                0, 3,
+                0, 0, 0, 1,
                 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-                0, 3,
+                0, 0, 0, 3,
                 // Value variant (Null)
                 0, 0, 0, 0, 0, 0, 0, 1,
                 // number of tuple elements
@@ -1977,13 +2010,14 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 1,
+                0, 3,
+                0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-                0, 12,
+                0, 0, 0, 12,
                 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
                     98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
-                0, 9,
+                0, 0, 0, 9,
                 0, 0, 0, 0, 0, 0, 0, 2,
                 1,
                 14, 0, 0, 0, 0, 0, 0, 0,
@@ -1993,13 +2027,14 @@ mod tests {
                 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                 0, 0, 0, 2,
-                0, 0, 0, 1,
+                0, 3,
+                0, 0, 0, 0,
                 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
                     18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-                0, 12,
+                0, 0, 0, 12,
                 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
                     98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102, 98, 101, 101, 102,
-                0, 9,
+                0, 0, 0, 9,
                 0, 0, 0, 0, 0, 0, 0, 1,
                 0,
             ],
@@ -2010,6 +2045,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
                         txid: [2; 32],
                         vout: 3,
@@ -2022,6 +2058,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Funding(super::FundingInfo {
                         txid: [2; 32],
                         vout: 3,
@@ -2034,6 +2071,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
                         txid: [18; 32],
                         vin: 12,
@@ -2048,6 +2086,7 @@ mod tests {
                     code: b'H',
                     hash: [1; 32],
                     confirmed_height: 2,
+                    tx_position: 3,
                     txinfo: super::TxHistoryInfo::Spending(super::SpendingInfo {
                         txid: [18; 32],
                         vin: 12,

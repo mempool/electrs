@@ -238,7 +238,7 @@ impl HeaderList {
         // Use the timestamp as the mtp of the genesis block.
         // Matches bitcoind's behaviour: bitcoin-cli getblock `bitcoin-cli getblockhash 0` | jq '.time == .mediantime'
         if height == 0 {
-            self.headers.get(0).unwrap().header.time
+            self.headers.first().unwrap().header.time
         } else if height > self.len() - 1 {
             0
         } else {

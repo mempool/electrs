@@ -19,7 +19,13 @@ pub fn get_pegout_data(
     let pegged_asset_id = network.pegged_asset()?;
     txout.pegout_data().filter(|pegout| {
         pegout.asset == Asset::Explicit(*pegged_asset_id)
-            && pegout.genesis_hash == bitcoin_genesis_hash(parent_network)
+            && pegout.genesis_hash
+                == bitcoin_genesis_hash(match parent_network {
+                    BNetwork::Bitcoin => Network::Liquid,
+                    BNetwork::Testnet => Network::LiquidTestnet,
+                    BNetwork::Signet => return false,
+                    BNetwork::Regtest => Network::LiquidRegtest,
+                })
     })
 }
 
@@ -55,7 +61,7 @@ impl PegoutValue {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PeginInfo {
     pub txid: FullHash,
-    pub vin: u16,
+    pub vin: u32,
     pub value: u64,
 }
 
@@ -64,6 +70,6 @@ pub struct PeginInfo {
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct PegoutInfo {
     pub txid: FullHash,
-    pub vout: u16,
+    pub vout: u32,
     pub value: u64,
 }
