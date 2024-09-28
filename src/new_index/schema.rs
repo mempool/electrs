@@ -516,17 +516,14 @@ impl ChainQuery {
     fn history_iter_scan_group_reverse(
         &self,
         code: u8,
-        hashes: Vec<[u8; 32]>,
+        hashes: &[[u8; 32]],
     ) -> ReverseScanGroupIterator {
         self.store.history_db.iter_scan_group_reverse(
-            hashes
-                .into_iter()
-                .map(|hash| {
-                    let prefix = TxHistoryRow::filter(code, &hash[..]);
-                    let prefix_max = TxHistoryRow::prefix_end(code, &hash[..]);
-                    (prefix, prefix_max)
-                })
-                .collect(),
+            hashes.iter().map(|hash| {
+                let prefix = TxHistoryRow::filter(code, &hash[..]);
+                let prefix_max = TxHistoryRow::prefix_end(code, &hash[..]);
+                (prefix, prefix_max)
+            }),
             33,
         )
     }
@@ -660,7 +657,7 @@ impl ChainQuery {
         // scripthash lookup
         let _timer_scan = self.start_timer("address_group_summary");
         let rows = self
-            .history_iter_scan_group_reverse(b'H', scripthashes)
+            .history_iter_scan_group_reverse(b'H', &scripthashes)
             .map(TxHistoryRow::from_row);
 
         self.collate_summaries(rows, last_seen_txid, limit)
@@ -745,7 +742,7 @@ impl ChainQuery {
         &self,
         scripthashes: Vec<[u8; 32]>,
     ) -> impl Iterator<Item = Txid> + '_ {
-        self.history_iter_scan_group_reverse(b'H', scripthashes)
+        self.history_iter_scan_group_reverse(b'H', &scripthashes)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
             .unique()
     }
@@ -760,7 +757,7 @@ impl ChainQuery {
         print!("limit {} | last_seen {:?}", limit, last_seen_txid);
         let _timer_scan = self.start_timer("history_group");
         let txs_conf = self
-            .history_iter_scan_group_reverse(code, hashes)
+            .history_iter_scan_group_reverse(code, &hashes)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
             // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
             .unique()

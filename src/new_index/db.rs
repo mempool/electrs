@@ -82,19 +82,17 @@ pub struct ReverseScanGroupIterator<'a> {
 
 impl<'a> ReverseScanGroupIterator<'a> {
     pub fn new(
-        iters: Vec<ReverseScanIterator<'a>>,
+        mut iters: Vec<ReverseScanIterator<'a>>,
         value_offset: usize,
     ) -> ReverseScanGroupIterator {
-        let mut next_rows: Vec<Option<DBRow>> = Vec::new();
-        let mut new_iters: Vec<ReverseScanIterator<'a>> = Vec::new();
-        for mut iter in iters {
+        let mut next_rows: Vec<Option<DBRow>> = Vec::with_capacity(iters.len());
+        for iter in &mut iters {
             let next = iter.next();
             next_rows.push(next);
-            new_iters.push(iter);
         }
         let done = next_rows.iter().all(|row| row.is_none());
         ReverseScanGroupIterator {
-            iters: new_iters,
+            iters,
             next_rows,
             value_offset,
             done,
@@ -205,11 +203,10 @@ impl DB {
 
     pub fn iter_scan_group_reverse(
         &self,
-        prefixes: Vec<(Vec<u8>, Vec<u8>)>,
+        prefixes: impl Iterator<Item = (Vec<u8>, Vec<u8>)>,
         value_offset: usize,
     ) -> ReverseScanGroupIterator {
         let iters = prefixes
-            .iter()
             .map(|(prefix, prefix_max)| {
                 let mut iter = self.db.raw_iterator();
                 iter.seek_for_prev(prefix_max);
