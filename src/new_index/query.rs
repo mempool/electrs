@@ -107,6 +107,31 @@ impl Query {
         Ok(utxos)
     }
 
+    pub fn recent_utxo(&self, scripthash: &[u8]) -> Result<Vec<Utxo>> {
+        let mut utxos = self.chain.recent_utxo(
+            scripthash,
+            self.config.utxos_limit,
+            self.config.utxos_history_limit,
+            super::db::DBFlush::Enable,
+        )?;
+        let mempool = self.mempool();
+        utxos.retain(|utxo| !mempool.has_spend(&OutPoint::from(utxo)));
+        utxos.extend(mempool.utxo(scripthash));
+        utxos.sort_by(|a, b| match (&a.confirmed, &b.confirmed) {
+            (Some(block_a), Some(block_b)) => {
+                if block_a.height == block_b.height {
+                    a.txid.cmp(&b.txid)
+                } else {
+                    block_b.height.cmp(&block_a.height)
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => a.txid.cmp(&b.txid),
+        });
+        Ok(utxos)
+    }
+
     pub fn history_txids(&self, scripthash: &[u8], limit: usize) -> Vec<(Txid, Option<BlockId>)> {
         let confirmed_txids = self.chain.history_txids(scripthash, limit);
         let confirmed_len = confirmed_txids.len();
