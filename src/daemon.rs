@@ -602,7 +602,7 @@ impl Daemon {
     }
 
     pub fn broadcast_raw(&self, txhex: &str) -> Result<Txid> {
-        let txid = self.request("sendrawtransaction", json!([txhex]))?;
+        let txid = self.request("sendrawtransaction", json!([txhex, 0]))?;
         Txid::from_hex(txid.as_str().chain_err(|| "non-string txid")?)
             .chain_err(|| "failed to parse txid")
     }
