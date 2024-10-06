@@ -936,20 +936,20 @@ fn handle_request(
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
 
-        (&Method::GET, Some(script_types @ &"addresses"), Some(&"txs"), None, None, None)
-        | (&Method::GET, Some(script_types @ &"scripthashes"), Some(&"txs"), None, None, None) => {
+        (&Method::POST, Some(script_types @ &"addresses"), Some(&"txs"), None, None, None)
+        | (&Method::POST, Some(script_types @ &"scripthashes"), Some(&"txs"), None, None, None) => {
             let script_type = match *script_types {
                 "addresses" => "address",
                 "scripthashes" => "scripthash",
                 _ => "",
             };
-            let script_hashes: Vec<[u8; 32]> = query_params
-                .get(*script_types)
-                .ok_or(HttpError::from(format!("No {} specified", script_types)))?
-                .as_str()
-                .split(',')
-                .map(|script_str| to_scripthash(script_type, script_str, config.network_type))
-                .filter_map(|s| s.ok())
+
+            let script_hashes: Vec<[u8; 32]> = serde_json::from_slice::<Vec<String>>(&body)
+                .map_err(|err| HttpError::from(err.to_string()))?
+                .iter()
+                .filter_map(|script_str| {
+                    to_scripthash(script_type, script_str, config.network_type).ok()
+                })
                 .collect();
 
             let max_txs = query_params
@@ -1083,7 +1083,7 @@ fn handle_request(
             None,
         )
         | (
-            &Method::GET,
+            &Method::POST,
             Some(script_types @ &"scripthashes"),
             Some(&"txs"),
             Some(&"summary"),
@@ -1095,13 +1095,12 @@ fn handle_request(
                 "scripthashes" => "scripthash",
                 _ => "",
             };
-            let script_hashes: Vec<[u8; 32]> = query_params
-                .get(*script_types)
-                .ok_or(HttpError::from(format!("No {} specified", script_types)))?
-                .as_str()
-                .split(',')
-                .map(|script_str| to_scripthash(script_type, script_str, config.network_type))
-                .filter_map(|s| s.ok())
+            let script_hashes: Vec<[u8; 32]> = serde_json::from_slice::<Vec<String>>(&body)
+                .map_err(|err| HttpError::from(err.to_string()))?
+                .iter()
+                .filter_map(|script_str| {
+                    to_scripthash(script_type, script_str, config.network_type).ok()
+                })
                 .collect();
 
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
