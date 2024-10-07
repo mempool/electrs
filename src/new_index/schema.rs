@@ -517,11 +517,15 @@ impl ChainQuery {
         &self,
         code: u8,
         hashes: &[[u8; 32]],
+        start_height: Option<u32>,
     ) -> ReverseScanGroupIterator {
         self.store.history_db.iter_scan_group_reverse(
             hashes.iter().map(|hash| {
                 let prefix = TxHistoryRow::filter(code, &hash[..]);
-                let prefix_max = TxHistoryRow::prefix_end(code, &hash[..]);
+                let prefix_max = start_height
+                    .map_or(TxHistoryRow::prefix_end(code, &hash[..]), |start_height| {
+                        TxHistoryRow::prefix_height_end(code, &hash[..], start_height)
+                    });
                 (prefix, prefix_max)
             }),
             33,
@@ -652,12 +656,13 @@ impl ChainQuery {
         &self,
         scripthashes: &[[u8; 32]],
         last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> Vec<TxHistorySummary> {
         // scripthash lookup
         let _timer_scan = self.start_timer("address_group_summary");
         let rows = self
-            .history_iter_scan_group_reverse(b'H', scripthashes)
+            .history_iter_scan_group_reverse(b'H', scripthashes, start_height)
             .map(TxHistoryRow::from_row);
 
         self.collate_summaries(rows, last_seen_txid, limit)
@@ -732,17 +737,19 @@ impl ChainQuery {
         &self,
         scripthashes: &[[u8; 32]],
         last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> Vec<(Transaction, BlockId)> {
         // scripthash lookup
-        self._history_group(b'H', scripthashes, last_seen_txid, limit)
+        self._history_group(b'H', scripthashes, last_seen_txid, start_height, limit)
     }
 
     pub fn history_txids_iter_group(
         &self,
         scripthashes: &[[u8; 32]],
+        start_height: Option<u32>,
     ) -> impl Iterator<Item = Txid> + '_ {
-        self.history_iter_scan_group_reverse(b'H', scripthashes)
+        self.history_iter_scan_group_reverse(b'H', scripthashes, start_height)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
             .unique()
     }
@@ -752,18 +759,19 @@ impl ChainQuery {
         code: u8,
         hashes: &[[u8; 32]],
         last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> Vec<(Transaction, BlockId)> {
         print!("limit {} | last_seen {:?}", limit, last_seen_txid);
         let _timer_scan = self.start_timer("history_group");
         let txs_conf = self
-            .history_iter_scan_group_reverse(code, hashes)
+            .history_iter_scan_group_reverse(code, hashes, start_height)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
             // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
             .unique()
-            // TODO seek directly to last seen tx without reading earlier rows
             .skip_while(|txid| {
-                // skip until we reach the last_seen_txid
+                // we already seeked to the last txid at this height
+                // now skip just past the last_seen_txid itself
                 last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
             })
             .skip(match last_seen_txid {
@@ -1754,6 +1762,12 @@ impl TxHistoryRow {
 
     fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
         bincode_util::serialize_big(&(code, full_hash(hash), height)).unwrap()
+    }
+
+    // prefix representing the end of a given block (used for reverse scans)
+    fn prefix_height_end(code: u8, hash: &[u8], height: u32) -> Bytes {
+        // u16::MAX for the tx_position ensures we get all transactions at this height
+        bincode_util::serialize_big(&(code, full_hash(hash), height, u16::MAX)).unwrap()
     }
 
     pub fn into_row(self) -> DBRow {

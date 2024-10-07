@@ -541,6 +541,27 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
+enum TxidLocation {
+    Mempool,
+    Chain(u32), // contains height
+    None,
+}
+
+#[inline]
+fn find_txid(
+    txid: &Txid,
+    mempool: &crate::new_index::Mempool,
+    chain: &crate::new_index::ChainQuery,
+) -> TxidLocation {
+    if mempool.lookup_txn(txid).is_some() {
+        TxidLocation::Mempool
+    } else if let Some(block) = chain.tx_confirming_block(txid) {
+        TxidLocation::Chain(block.height as u32)
+    } else {
+        TxidLocation::None
+    }
+}
+
 /// Prepare transactions to be serialized in a JSON response
 ///
 /// Any transactions with missing prevouts will be filtered out of the response, rather than returned with incorrect data.
@@ -980,33 +1001,33 @@ fn handle_request(
 
             let mut txs = vec![];
 
-            if let Some(given_txid) = &after_txid {
-                let is_mempool = query
-                    .mempool()
-                    .history_txids_iter_group(&script_hashes)
-                    .any(|txid| given_txid == &txid);
-                let is_confirmed = if is_mempool {
-                    false
-                } else {
-                    query
-                        .chain()
-                        .history_txids_iter_group(&script_hashes)
-                        .any(|txid| given_txid == &txid)
-                };
-                if !is_mempool && !is_confirmed {
+            let after_txid_location = if let Some(txid) = &after_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let mut confirmed_block_height = None;
+            match after_txid_location {
+                TxidLocation::Mempool => {
+                    txs.extend(
+                        query
+                            .mempool()
+                            .history_group(&script_hashes, after_txid.as_ref(), max_txs)
+                            .into_iter()
+                            .map(|tx| (tx, None)),
+                    );
+                }
+                TxidLocation::None => {
                     return Err(HttpError(
                         StatusCode::UNPROCESSABLE_ENTITY,
                         String::from("after_txid not found"),
                     ));
                 }
+                TxidLocation::Chain(height) => {
+                    confirmed_block_height = Some(height);
+                }
             }
-            txs.extend(
-                query
-                    .mempool()
-                    .history_group(&script_hashes, after_txid.as_ref(), max_txs)
-                    .into_iter()
-                    .map(|tx| (tx, None)),
-            );
 
             if txs.len() < max_txs {
                 let after_txid_ref = if !txs.is_empty() {
@@ -1019,7 +1040,12 @@ fn handle_request(
                 txs.extend(
                     query
                         .chain()
-                        .history_group(&script_hashes, after_txid_ref, max_txs - txs.len())
+                        .history_group(
+                            &script_hashes,
+                            after_txid_ref,
+                            confirmed_block_height,
+                            max_txs - txs.len(),
+                        )
                         .into_iter()
                         .map(|(tx, blockid)| (tx, Some(blockid))),
                 );
@@ -1147,10 +1173,32 @@ fn handle_request(
                     .unwrap_or(config.rest_default_max_address_summary_txs),
             );
 
-            let summary =
-                query
-                    .chain()
-                    .summary_group(&script_hashes, last_seen_txid.as_ref(), max_txs);
+            let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let mut confirmed_block_height = None;
+            match last_seen_txid_location {
+                TxidLocation::Mempool => {}
+                TxidLocation::None => {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+                TxidLocation::Chain(height) => {
+                    confirmed_block_height = Some(height);
+                }
+            }
+
+            let summary = query.chain().summary_group(
+                &script_hashes,
+                last_seen_txid.as_ref(),
+                confirmed_block_height,
+                max_txs,
+            );
 
             json_response(summary, TTL_SHORT)
         }
