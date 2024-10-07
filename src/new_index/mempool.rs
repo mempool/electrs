@@ -179,7 +179,7 @@ impl Mempool {
 
     pub fn history_group(
         &self,
-        scripthashes: Vec<[u8; 32]>,
+        scripthashes: &[[u8; 32]],
         last_seen_txid: Option<&Txid>,
         limit: usize,
     ) -> Vec<Transaction> {
@@ -188,7 +188,7 @@ impl Mempool {
             .with_label_values(&["history_group"])
             .start_timer();
         scripthashes
-            .into_iter()
+            .iter()
             .filter_map(|scripthash| self.history.get(&scripthash[..]))
             .flat_map(|entries| entries.iter())
             .map(|e| e.get_txid())
@@ -208,12 +208,12 @@ impl Mempool {
             .collect()
     }
 
-    pub fn history_txids_iter_group(
-        &self,
-        scripthashes: Vec<[u8; 32]>,
-    ) -> impl Iterator<Item = Txid> + '_ {
+    pub fn history_txids_iter_group<'a>(
+        &'a self,
+        scripthashes: &'a [[u8; 32]],
+    ) -> impl Iterator<Item = Txid> + 'a {
         scripthashes
-            .into_iter()
+            .iter()
             .filter_map(move |scripthash| self.history.get(&scripthash[..]))
             .flat_map(|entries| entries.iter())
             .map(|entry| entry.get_txid())

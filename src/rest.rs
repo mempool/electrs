@@ -42,6 +42,8 @@ use std::thread;
 use url::form_urlencoded;
 
 const ADDRESS_SEARCH_LIMIT: usize = 10;
+// Limit to 300 addresses
+const MULTI_ADDRESS_LIMIT: usize = 300;
 
 #[cfg(feature = "liquid")]
 const ASSETS_PER_PAGE: usize = 25;
@@ -944,8 +946,24 @@ fn handle_request(
                 _ => "",
             };
 
-            let script_hashes: Vec<[u8; 32]> = serde_json::from_slice::<Vec<String>>(&body)
-                .map_err(|err| HttpError::from(err.to_string()))?
+            if multi_address_too_long(&body) {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            if script_hashes.len() > MULTI_ADDRESS_LIMIT {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<[u8; 32]> = script_hashes
                 .iter()
                 .filter_map(|script_str| {
                     to_scripthash(script_type, script_str, config.network_type).ok()
@@ -965,14 +983,14 @@ fn handle_request(
             if let Some(given_txid) = &after_txid {
                 let is_mempool = query
                     .mempool()
-                    .history_txids_iter_group(script_hashes.clone())
+                    .history_txids_iter_group(&script_hashes)
                     .any(|txid| given_txid == &txid);
                 let is_confirmed = if is_mempool {
                     false
                 } else {
                     query
                         .chain()
-                        .history_txids_iter_group(script_hashes.clone())
+                        .history_txids_iter_group(&script_hashes)
                         .any(|txid| given_txid == &txid)
                 };
                 if !is_mempool && !is_confirmed {
@@ -985,7 +1003,7 @@ fn handle_request(
             txs.extend(
                 query
                     .mempool()
-                    .history_group(script_hashes.clone(), after_txid.as_ref(), max_txs)
+                    .history_group(&script_hashes, after_txid.as_ref(), max_txs)
                     .into_iter()
                     .map(|tx| (tx, None)),
             );
@@ -1001,7 +1019,7 @@ fn handle_request(
                 txs.extend(
                     query
                         .chain()
-                        .history_group(script_hashes, after_txid_ref, max_txs - txs.len())
+                        .history_group(&script_hashes, after_txid_ref, max_txs - txs.len())
                         .into_iter()
                         .map(|(tx, blockid)| (tx, Some(blockid))),
                 );
@@ -1095,8 +1113,25 @@ fn handle_request(
                 "scripthashes" => "scripthash",
                 _ => "",
             };
-            let script_hashes: Vec<[u8; 32]> = serde_json::from_slice::<Vec<String>>(&body)
-                .map_err(|err| HttpError::from(err.to_string()))?
+
+            if multi_address_too_long(&body) {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            if script_hashes.len() > MULTI_ADDRESS_LIMIT {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<[u8; 32]> = script_hashes
                 .iter()
                 .filter_map(|script_str| {
                     to_scripthash(script_type, script_str, config.network_type).ok()
@@ -1115,7 +1150,7 @@ fn handle_request(
             let summary =
                 query
                     .chain()
-                    .summary_group(script_hashes, last_seen_txid.as_ref(), max_txs);
+                    .summary_group(&script_hashes, last_seen_txid.as_ref(), max_txs);
 
             json_response(summary, TTL_SHORT)
         }
@@ -1821,6 +1856,15 @@ fn parse_scripthash(scripthash: &str) -> Result<FullHash, HttpError> {
     } else {
         Ok(full_hash(&bytes))
     }
+}
+
+#[inline]
+fn multi_address_too_long(body: &hyper::body::Bytes) -> bool {
+    // ("",) (3) (quotes and comma between each entry)
+    // (\n    ) (5) (allows for pretty printed JSON with 4 space indent)
+    // The opening [] and whatnot don't need to be accounted for, we give more than enough leeway
+    // p2tr and p2wsh are 55 length, scripthashes are 64.
+    body.len() > (8 + 64) * MULTI_ADDRESS_LIMIT
 }
 
 #[derive(Debug)]
