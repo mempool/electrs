@@ -19,6 +19,7 @@ use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use prometheus::{HistogramOpts, HistogramVec};
+use rayon::iter::ParallelIterator;
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
@@ -951,8 +952,8 @@ fn handle_request(
                     query
                         .chain()
                         .history(&script_hash[..], after_txid_ref, max_txs - txs.len())
-                        .into_iter()
-                        .map(|(tx, blockid)| (tx, Some(blockid))),
+                        .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                        .collect::<Result<Vec<_>, _>>()?,
                 );
             }
 
@@ -1046,8 +1047,8 @@ fn handle_request(
                             confirmed_block_height,
                             max_txs - txs.len(),
                         )
-                        .into_iter()
-                        .map(|(tx, blockid)| (tx, Some(blockid))),
+                        .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                        .collect::<Result<Vec<_>, _>>()?,
                 );
             }
 
@@ -1080,9 +1081,8 @@ fn handle_request(
             let txs = query
                 .chain()
                 .history(&script_hash[..], last_seen_txid.as_ref(), max_txs)
-                .into_iter()
-                .map(|(tx, blockid)| (tx, Some(blockid)))
-                .collect();
+                .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                .collect::<Result<Vec<_>, _>>()?;
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
@@ -1697,8 +1697,8 @@ fn handle_request(
                 query
                     .chain()
                     .asset_history(&asset_id, None, config.rest_default_chain_txs_per_page)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid))),
+                    .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                    .collect::<Result<Vec<_>, _>>()?,
             );
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
@@ -1723,9 +1723,8 @@ fn handle_request(
                     last_seen_txid.as_ref(),
                     config.rest_default_chain_txs_per_page,
                 )
-                .into_iter()
-                .map(|(tx, blockid)| (tx, Some(blockid)))
-                .collect();
+                .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                .collect::<Result<Vec<_>, _>>()?;
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }

@@ -668,12 +668,12 @@ impl ChainQuery {
         self.collate_summaries(rows, last_seen_txid, limit)
     }
 
-    pub fn history(
-        &self,
+    pub fn history<'a>(
+        &'a self,
         scripthash: &[u8],
-        last_seen_txid: Option<&Txid>,
+        last_seen_txid: Option<&'a Txid>,
         limit: usize,
-    ) -> Vec<(Transaction, BlockId)> {
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         // scripthash lookup
         self._history(b'H', scripthash, last_seen_txid, limit)
     }
@@ -684,38 +684,32 @@ impl ChainQuery {
             .unique()
     }
 
-    fn _history(
-        &self,
+    fn _history<'a>(
+        &'a self,
         code: u8,
         hash: &[u8],
-        last_seen_txid: Option<&Txid>,
+        last_seen_txid: Option<&'a Txid>,
         limit: usize,
-    ) -> Vec<(Transaction, BlockId)> {
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         let _timer_scan = self.start_timer("history");
-        let txs_conf = self
-            .history_iter_scan_reverse(code, hash)
-            .map(|row| TxHistoryRow::from_row(row).get_txid())
-            // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
-            .unique()
-            // TODO seek directly to last seen tx without reading earlier rows
-            .skip_while(|txid| {
-                // skip until we reach the last_seen_txid
-                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
-            })
-            .skip(match last_seen_txid {
-                Some(_) => 1, // skip the last_seen_txid itself
-                None => 0,
-            })
-            .filter_map(|txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
-            .take(limit)
-            .collect::<Vec<(Txid, BlockId)>>();
 
-        self.lookup_txns(&txs_conf)
-            .expect("failed looking up txs in history index")
-            .into_iter()
-            .zip(txs_conf)
-            .map(|(tx, (_, blockid))| (tx, blockid))
-            .collect()
+        self.lookup_txns(
+            self.history_iter_scan_reverse(code, hash)
+                .map(|row| TxHistoryRow::from_row(row).get_txid())
+                // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
+                .unique()
+                // TODO seek directly to last seen tx without reading earlier rows
+                .skip_while(move |txid| {
+                    // skip until we reach the last_seen_txid
+                    last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+                })
+                .skip(match last_seen_txid {
+                    Some(_) => 1, // skip the last_seen_txid itself
+                    None => 0,
+                })
+                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
+                .take(limit),
+        )
     }
 
     pub fn history_txids(&self, scripthash: &[u8], limit: usize) -> Vec<(Txid, BlockId)> {
@@ -733,13 +727,13 @@ impl ChainQuery {
             .collect()
     }
 
-    pub fn history_group(
-        &self,
+    pub fn history_group<'a>(
+        &'a self,
         scripthashes: &[[u8; 32]],
-        last_seen_txid: Option<&Txid>,
+        last_seen_txid: Option<&'a Txid>,
         start_height: Option<u32>,
         limit: usize,
-    ) -> Vec<(Transaction, BlockId)> {
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         // scripthash lookup
         self._history_group(b'H', scripthashes, last_seen_txid, start_height, limit)
     }
@@ -754,40 +748,34 @@ impl ChainQuery {
             .unique()
     }
 
-    fn _history_group(
-        &self,
+    fn _history_group<'a>(
+        &'a self,
         code: u8,
         hashes: &[[u8; 32]],
-        last_seen_txid: Option<&Txid>,
+        last_seen_txid: Option<&'a Txid>,
         start_height: Option<u32>,
         limit: usize,
-    ) -> Vec<(Transaction, BlockId)> {
-        print!("limit {} | last_seen {:?}", limit, last_seen_txid);
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
+        debug!("limit {} | last_seen {:?}", limit, last_seen_txid);
         let _timer_scan = self.start_timer("history_group");
-        let txs_conf = self
-            .history_iter_scan_group_reverse(code, hashes, start_height)
-            .map(|row| TxHistoryRow::from_row(row).get_txid())
-            // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
-            .unique()
-            .skip_while(|txid| {
-                // we already seeked to the last txid at this height
-                // now skip just past the last_seen_txid itself
-                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
-            })
-            .skip(match last_seen_txid {
-                Some(_) => 1, // skip the last_seen_txid itself
-                None => 0,
-            })
-            .filter_map(|txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
-            .take(limit)
-            .collect::<Vec<(Txid, BlockId)>>();
 
-        self.lookup_txns(&txs_conf)
-            .expect("failed looking up txs in history index")
-            .into_iter()
-            .zip(txs_conf)
-            .map(|(tx, (_, blockid))| (tx, blockid))
-            .collect()
+        self.lookup_txns(
+            self.history_iter_scan_group_reverse(code, hashes, start_height)
+                .map(|row| TxHistoryRow::from_row(row).get_txid())
+                // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
+                .unique()
+                .skip_while(move |txid| {
+                    // we already seeked to the last txid at this height
+                    // now skip just past the last_seen_txid itself
+                    last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+                })
+                .skip(match last_seen_txid {
+                    Some(_) => 1, // skip the last_seen_txid itself
+                    None => 0,
+                })
+                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
+                .take(limit),
+        )
     }
 
     // TODO: avoid duplication with stats/stats_delta?
@@ -1086,15 +1074,20 @@ impl ChainQuery {
 
     // TODO: can we pass txids as a "generic iterable"?
     // TODO: should also use a custom ThreadPoolBuilder?
-    pub fn lookup_txns(&self, txids: &[(Txid, BlockId)]) -> Result<Vec<Transaction>> {
-        let _timer = self.start_timer("lookup_txns");
-        txids
-            .par_iter()
-            .map(|(txid, blockid)| {
-                self.lookup_txn(txid, Some(&blockid.hash))
-                    .chain_err(|| "missing tx")
-            })
-            .collect::<Result<Vec<Transaction>>>()
+    pub fn lookup_txns<'a, I>(
+        &'a self,
+        txids: I,
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a
+    where
+        I: Iterator<Item = (Txid, BlockId)> + Send + rayon::iter::ParallelBridge + 'a,
+    {
+        txids.par_bridge().map(move |(txid, blockid)| -> Result<_> {
+            Ok((
+                self.lookup_txn(&txid, Some(&blockid.hash))
+                    .chain_err(|| "missing tx")?,
+                blockid,
+            ))
+        })
     }
 
     pub fn lookup_txn(&self, txid: &Txid, blockhash: Option<&BlockHash>) -> Option<Transaction> {
@@ -1205,12 +1198,12 @@ impl ChainQuery {
     }
 
     #[cfg(feature = "liquid")]
-    pub fn asset_history(
-        &self,
-        asset_id: &AssetId,
-        last_seen_txid: Option<&Txid>,
+    pub fn asset_history<'a>(
+        &'a self,
+        asset_id: &'a AssetId,
+        last_seen_txid: Option<&'a Txid>,
         limit: usize,
-    ) -> Vec<(Transaction, BlockId)> {
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         self._history(b'I', &asset_id.into_inner()[..], last_seen_txid, limit)
     }
 
