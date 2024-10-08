@@ -707,8 +707,8 @@ impl ChainQuery {
                     Some(_) => 1, // skip the last_seen_txid itself
                     None => 0,
                 })
-                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
-                .take(limit),
+                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b))),
+            limit,
         )
     }
 
@@ -773,8 +773,8 @@ impl ChainQuery {
                     Some(_) => 1, // skip the last_seen_txid itself
                     None => 0,
                 })
-                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b)))
-                .take(limit),
+                .filter_map(move |txid| self.tx_confirming_block(&txid).map(|b| (txid, b))),
+            limit,
         )
     }
 
@@ -1077,17 +1077,21 @@ impl ChainQuery {
     pub fn lookup_txns<'a, I>(
         &'a self,
         txids: I,
+        take: usize,
     ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a
     where
         I: Iterator<Item = (Txid, BlockId)> + Send + rayon::iter::ParallelBridge + 'a,
     {
-        txids.par_bridge().map(move |(txid, blockid)| -> Result<_> {
-            Ok((
-                self.lookup_txn(&txid, Some(&blockid.hash))
-                    .chain_err(|| "missing tx")?,
-                blockid,
-            ))
-        })
+        txids
+            .take(take)
+            .par_bridge()
+            .map(move |(txid, blockid)| -> Result<_> {
+                Ok((
+                    self.lookup_txn(&txid, Some(&blockid.hash))
+                        .chain_err(|| "missing tx")?,
+                    blockid,
+                ))
+            })
     }
 
     pub fn lookup_txn(&self, txid: &Txid, blockhash: Option<&BlockHash>) -> Option<Transaction> {
