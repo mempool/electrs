@@ -1119,7 +1119,7 @@ fn handle_request(
             json_response(summary, TTL_SHORT)
         }
         (
-            &Method::GET,
+            &Method::POST,
             Some(script_types @ &"addresses"),
             Some(&"txs"),
             Some(&"summary"),
