@@ -507,10 +507,17 @@ impl ChainQuery {
             &TxHistoryRow::prefix_height(code, hash, start_height as u32),
         )
     }
-    fn history_iter_scan_reverse(&self, code: u8, hash: &[u8]) -> ReverseScanIterator {
+    fn history_iter_scan_reverse(
+        &self,
+        code: u8,
+        hash: &[u8],
+        start_height: Option<u32>,
+    ) -> ReverseScanIterator {
         self.store.history_db.iter_scan_reverse(
             &TxHistoryRow::filter(code, hash),
-            &TxHistoryRow::prefix_end(code, hash),
+            &start_height.map_or(TxHistoryRow::prefix_end(code, hash), |start_height| {
+                TxHistoryRow::prefix_height_end(code, hash, start_height)
+            }),
         )
     }
     fn history_iter_scan_group_reverse(
@@ -631,10 +638,11 @@ impl ChainQuery {
         &self,
         scripthash: &[u8],
         last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> Vec<TxHistorySummary> {
         // scripthash lookup
-        self._summary(b'H', scripthash, last_seen_txid, limit)
+        self._summary(b'H', scripthash, last_seen_txid, start_height, limit)
     }
 
     fn _summary(
@@ -642,11 +650,12 @@ impl ChainQuery {
         code: u8,
         hash: &[u8],
         last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> Vec<TxHistorySummary> {
         let _timer_scan = self.start_timer("address_summary");
         let rows = self
-            .history_iter_scan_reverse(code, hash)
+            .history_iter_scan_reverse(code, hash, start_height)
             .map(TxHistoryRow::from_row);
 
         self.collate_summaries(rows, last_seen_txid, limit)
@@ -672,14 +681,15 @@ impl ChainQuery {
         &'a self,
         scripthash: &[u8],
         last_seen_txid: Option<&'a Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         // scripthash lookup
-        self._history(b'H', scripthash, last_seen_txid, limit)
+        self._history(b'H', scripthash, last_seen_txid, start_height, limit)
     }
 
     pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {
-        self.history_iter_scan_reverse(b'H', scripthash)
+        self.history_iter_scan_reverse(b'H', scripthash, None)
             .map(|row| TxHistoryRow::from_row(row).get_txid())
             .unique()
     }
@@ -689,12 +699,13 @@ impl ChainQuery {
         code: u8,
         hash: &[u8],
         last_seen_txid: Option<&'a Txid>,
+        start_height: Option<u32>,
         limit: usize,
     ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
         let _timer_scan = self.start_timer("history");
 
         self.lookup_txns(
-            self.history_iter_scan_reverse(code, hash)
+            self.history_iter_scan_reverse(code, hash, start_height)
                 .map(|row| TxHistoryRow::from_row(row).get_txid())
                 // XXX: unique() requires keeping an in-memory list of all txids, can we avoid that?
                 .unique()
@@ -1208,7 +1219,13 @@ impl ChainQuery {
         last_seen_txid: Option<&'a Txid>,
         limit: usize,
     ) -> impl rayon::iter::ParallelIterator<Item = Result<(Transaction, BlockId)>> + 'a {
-        self._history(b'I', &asset_id.into_inner()[..], last_seen_txid, limit)
+        self._history(
+            b'I',
+            &asset_id.into_inner()[..],
+            last_seen_txid,
+            None,
+            limit,
+        )
     }
 
     #[cfg(feature = "liquid")]
