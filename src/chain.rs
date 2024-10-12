@@ -57,10 +57,17 @@ pub const LIQUID_TESTNET_PARAMS: address::AddressParams = address::AddressParams
     blech_hrp: "tlq",
 };
 
+/// Magic for testnet4, 0x1c163f28 (from BIP94) with flipped endianness.
+#[cfg(not(feature = "liquid"))]
+const TESTNET4_MAGIC: u32 = 0x283f161c;
+
 impl Network {
     #[cfg(not(feature = "liquid"))]
     pub fn magic(self) -> u32 {
-        BNetwork::from(self).magic()
+        match self {
+            Self::Testnet4 => TESTNET4_MAGIC,
+            _ => BNetwork::from(self).magic(),
+        }
     }
 
     #[cfg(feature = "liquid")]
