@@ -19,6 +19,10 @@ case "$(uname -s)" in
 	FreeBSD)
 		OS=FreeBSD
 		NPROC=$(sysctl -n hw.ncpu)
+		export CC=/usr/local/bin/clang17
+		export CXX=/usr/local/bin/clang++17
+		export CPP=/usr/local/bin/clang-cpp17
+		export RUSTFLAGS="-C linker=clang17"
 	;;
 	Darwin)
 		OS=Darwin
