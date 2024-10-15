@@ -14,6 +14,7 @@ pub use self::transaction::{
     sigops::transaction_sigop_count, TransactionStatus, TxInput,
 };
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -23,7 +24,7 @@ use std::thread::{self, ThreadId};
 use crate::chain::BlockHeader;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use socket2::{Domain, Protocol, Socket, Type};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 pub type Bytes = Vec<u8>;
 pub type HeaderMap = HashMap<Sha256dHash, BlockHeader>;
@@ -38,29 +39,26 @@ pub fn full_hash(hash: &[u8]) -> FullHash {
 }
 
 pub struct SyncChannel<T> {
-    tx: Option<crossbeam_channel::Sender<T>>,
+    tx: crossbeam_channel::Sender<T>,
     rx: Option<crossbeam_channel::Receiver<T>>,
 }
 
 impl<T> SyncChannel<T> {
     pub fn new(size: usize) -> SyncChannel<T> {
         let (tx, rx) = crossbeam_channel::bounded(size);
-        SyncChannel {
-            tx: Some(tx),
-            rx: Some(rx),
-        }
+        SyncChannel { tx, rx: Some(rx) }
     }
 
     pub fn sender(&self) -> crossbeam_channel::Sender<T> {
-        self.tx.as_ref().expect("No Sender").clone()
+        self.tx.clone()
     }
 
-    pub fn receiver(&self) -> &crossbeam_channel::Receiver<T> {
-        self.rx.as_ref().expect("No Receiver")
+    pub fn receiver(&self) -> Option<&crossbeam_channel::Receiver<T>> {
+        self.rx.as_ref()
     }
 
-    pub fn into_receiver(self) -> crossbeam_channel::Receiver<T> {
-        self.rx.expect("No Receiver")
+    pub fn into_receiver(self) -> Option<crossbeam_channel::Receiver<T>> {
+        self.rx
     }
 
     /// This drops the sender and receiver, causing all other methods to panic.
@@ -68,7 +66,6 @@ impl<T> SyncChannel<T> {
     /// Use only when you know that the channel will no longer be used.
     /// ie. shutdown.
     pub fn close(&mut self) -> Option<crossbeam_channel::Receiver<T>> {
-        self.tx.take();
         self.rx.take()
     }
 }
@@ -224,4 +221,16 @@ pub mod serde_hex {
             Ok(Some(FromHex::from_hex(&hex_str).map_err(D::Error::custom)?))
         }
     }
+}
+
+pub(crate) fn get_rest_addr() -> Option<IpAddr> {
+    REST_CLIENT_ADDR.with(|addr| addr.get())
+}
+pub(crate) fn set_rest_addr(input: Option<IpAddr>) {
+    REST_CLIENT_ADDR.with(|addr| {
+        addr.set(input);
+    });
+}
+tokio::task_local! {
+    pub(crate) static REST_CLIENT_ADDR: Cell<Option<IpAddr>>;
 }
