@@ -1482,6 +1482,56 @@ fn handle_request(
 
             json_response(result, TTL_SHORT)
         }
+        (&Method::POST, Some(&"txs"), Some(&"package"), None, None, None) => {
+            let txhexes: Vec<String> =
+                serde_json::from_str(String::from_utf8(body.to_vec())?.as_str())?;
+
+            if txhexes.len() > 25 {
+                Result::Err(HttpError::from(
+                    "Exceeded maximum of 25 transactions".to_string(),
+                ))?
+            }
+
+            let maxfeerate = query_params
+                .get("maxfeerate")
+                .map(|s| {
+                    s.parse::<f64>()
+                        .map_err(|_| HttpError::from("Invalid maxfeerate".to_string()))
+                })
+                .transpose()?;
+
+            let maxburnamount = query_params
+                .get("maxburnamount")
+                .map(|s| {
+                    s.parse::<f64>()
+                        .map_err(|_| HttpError::from("Invalid maxburnamount".to_string()))
+                })
+                .transpose()?;
+
+            // pre-checks
+            txhexes.iter().enumerate().try_for_each(|(index, txhex)| {
+                // each transaction must be of reasonable size (more than 60 bytes, within 400kWU standardness limit)
+                if !(120..800_000).contains(&txhex.len()) {
+                    Result::Err(HttpError::from(format!(
+                        "Invalid transaction size for item {}",
+                        index
+                    )))
+                } else {
+                    // must be a valid hex string
+                    Vec::<u8>::from_hex(txhex)
+                        .map_err(|_| {
+                            HttpError::from(format!("Invalid transaction hex for item {}", index))
+                        })
+                        .map(|_| ())
+                }
+            })?;
+
+            let result = query
+                .submit_package(txhexes, maxfeerate, maxburnamount)
+                .map_err(|err| HttpError::from(err.description().to_string()))?;
+
+            json_response(result, TTL_SHORT)
+        }
         (&Method::GET, Some(&"txs"), Some(&"outspends"), None, None, None) => {
             let txid_strings: Vec<&str> = query_params
                 .get("txids")
