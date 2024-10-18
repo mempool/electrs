@@ -4,9 +4,10 @@ use crate::errors;
 use crate::metrics::Metrics;
 use crate::new_index::{compute_script_hash, Query, SpendingInput, Utxo};
 use crate::util::{
-    create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
-    has_prevout, is_coinbase, transaction_sigop_count, BlockHeaderMeta, BlockId, FullHash,
-    ScriptToAddr, ScriptToAsm, TransactionStatus,
+    create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts,
+    get_rest_addr, get_tx_fee, has_prevout, is_coinbase, set_rest_addr, transaction_sigop_count,
+    BlockHeaderMeta, BlockId, FullHash, ScriptToAddr, ScriptToAsm, TransactionStatus,
+    REST_CLIENT_ADDR,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -17,12 +18,16 @@ use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::Error as HashError;
 use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Response, Server, StatusCode};
+use hyper::{header::HeaderValue, Body, HeaderMap, Method, Response, Server, StatusCode};
+use itertools::Itertools;
 use prometheus::{HistogramOpts, HistogramVec};
 use rayon::iter::ParallelIterator;
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
+use std::borrow::Cow;
+use std::cell::Cell;
+use std::net::IpAddr;
 use std::{cmp, fs};
 #[cfg(feature = "liquid")]
 use {
@@ -588,6 +593,28 @@ fn prepare_txs(
         .collect()
 }
 
+// Get the first valid IP address in the X-Forwarded-For header
+// Supports multiple headers.
+fn get_client_ip(headers: &HeaderMap<HeaderValue>, rest_proxy_depth: usize) -> Option<IpAddr> {
+    if rest_proxy_depth == 0 {
+        return None;
+    }
+    headers
+        .get_all("X-Forwarded-For")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .join(",")
+        .split(',')
+        .nth(rest_proxy_depth - 1)
+        .and_then(|ip| ip.trim().parse::<IpAddr>().ok())
+}
+
+fn get_client_ip_str() -> Cow<'static, str> {
+    get_rest_addr()
+        .map(|a| Cow::Owned(a.to_string()))
+        .unwrap_or_else(|| Cow::Borrowed("Unknown IP"))
+}
+
 #[tokio::main]
 async fn run_server(
     config: Arc<Config>,
@@ -612,16 +639,20 @@ async fn run_server(
                 let config = Arc::clone(&config);
                 let timer = metric.with_label_values(&["all_methods"]).start_timer();
 
-                async move {
+                REST_CLIENT_ADDR.scope(Cell::new(None), async move {
                     let method = req.method().clone();
                     let uri = req.uri().clone();
+
+                    // Set the task local IP addr from X-Forwarded-For
+                    set_rest_addr(get_client_ip(req.headers(), config.rest_proxy_depth));
+
                     let body = hyper::body::to_bytes(req.into_body()).await?;
 
                     let mut resp = tokio::task::block_in_place(|| {
                         handle_request(method, uri, body, &query, &config)
                     })
                     .unwrap_or_else(|err| {
-                        warn!("{:?}", err);
+                        warn!("[{}] {:?}", get_client_ip_str(), err);
                         Response::builder()
                             .status(err.0)
                             .header("Content-Type", "text/plain")
@@ -635,7 +666,7 @@ async fn run_server(
                     }
                     timer.observe_duration();
                     Ok::<_, hyper::Error>(resp)
-                }
+                })
             }))
         }
     };
@@ -723,7 +754,7 @@ fn handle_request(
         None => HashMap::new(),
     };
 
-    info!("handle {:?} {:?}", method, uri);
+    info!("[{}] handle {:?} {:?}", get_client_ip_str(), method, uri);
     match (
         &method,
         path.first(),

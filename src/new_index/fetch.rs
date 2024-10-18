@@ -74,7 +74,7 @@ fn bitcoind_fetcher(
     let chan = SyncChannel::new(1);
     let sender = chan.sender();
     Ok(Fetcher::from(
-        chan.into_receiver(),
+        chan.into_receiver().expect("not closed"),
         spawn_thread("bitcoind_fetcher", move || {
             for entries in new_headers.chunks(100) {
                 let blockhashes: Vec<BlockHash> = entries.iter().map(|e| *e.hash()).collect();
@@ -115,7 +115,7 @@ fn blkfiles_fetcher(
 
     let parser = blkfiles_parser(blkfiles_reader(blk_files), magic);
     Ok(Fetcher::from(
-        chan.into_receiver(),
+        chan.into_receiver().expect("not closed"),
         spawn_thread("blkfiles_fetcher", move || {
             parser.map(|sizedblocks| {
                 let block_entries: Vec<BlockEntry> = sizedblocks
@@ -151,7 +151,7 @@ fn blkfiles_reader(blk_files: Vec<PathBuf>) -> Fetcher<Vec<u8>> {
     let sender = chan.sender();
 
     Fetcher::from(
-        chan.into_receiver(),
+        chan.into_receiver().expect("not closed"),
         spawn_thread("blkfiles_reader", move || {
             for path in blk_files {
                 trace!("reading {:?}", path);
@@ -170,7 +170,7 @@ fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: u32) -> Fetcher<Vec<SizedBloc
     let sender = chan.sender();
 
     Fetcher::from(
-        chan.into_receiver(),
+        chan.into_receiver().expect("not closed"),
         spawn_thread("blkfiles_parser", move || {
             blobs.map(|blob| {
                 trace!("parsing {} bytes", blob.len());
