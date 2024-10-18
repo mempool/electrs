@@ -53,6 +53,7 @@ pub struct Config {
     pub precache_scripts: Option<String>,
     pub precache_threads: usize,
     pub utxos_limit: usize,
+    pub utxos_history_limit: usize,
     pub electrum_txs_limit: usize,
     pub electrum_banner: String,
     pub mempool_backlog_stats_ttl: u64,
@@ -217,6 +218,12 @@ impl Config {
                     .long("utxos-limit")
                     .help("Maximum number of utxos to process per address. Lookups for addresses with more utxos will fail. Applies to the Electrum and HTTP APIs.")
                     .default_value("500")
+            )
+            .arg(
+                Arg::with_name("utxos_history_limit")
+                    .long("utxos-history-limit")
+                    .help("Maximum number of history entries to process per address when looking up recent utxos.")
+                    .default_value("20000")
             )
             .arg(
                 Arg::with_name("mempool_backlog_stats_ttl")
@@ -514,6 +521,7 @@ impl Config {
             daemon_rpc_addr,
             cookie,
             utxos_limit: value_t_or_exit!(m, "utxos_limit", usize),
+            utxos_history_limit: value_t_or_exit!(m, "utxos_history_limit", usize),
             electrum_rpc_addr,
             electrum_txs_limit: value_t_or_exit!(m, "electrum_txs_limit", usize),
             electrum_banner,
