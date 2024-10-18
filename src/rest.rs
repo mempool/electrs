@@ -19,6 +19,7 @@ use hex::{self, FromHexError};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use prometheus::{HistogramOpts, HistogramVec};
+use rayon::iter::ParallelIterator;
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
@@ -42,6 +43,8 @@ use std::thread;
 use url::form_urlencoded;
 
 const ADDRESS_SEARCH_LIMIT: usize = 10;
+// Limit to 300 addresses
+const MULTI_ADDRESS_LIMIT: usize = 300;
 
 #[cfg(feature = "liquid")]
 const ASSETS_PER_PAGE: usize = 25;
@@ -539,6 +542,27 @@ fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
     })
 }
 
+enum TxidLocation {
+    Mempool,
+    Chain(u32), // contains height
+    None,
+}
+
+#[inline]
+fn find_txid(
+    txid: &Txid,
+    mempool: &crate::new_index::Mempool,
+    chain: &crate::new_index::ChainQuery,
+) -> TxidLocation {
+    if mempool.lookup_txn(txid).is_some() {
+        TxidLocation::Mempool
+    } else if let Some(block) = chain.tx_confirming_block(txid) {
+        TxidLocation::Chain(block.height as u32)
+    } else {
+        TxidLocation::None
+    }
+}
+
 /// Prepare transactions to be serialized in a JSON response
 ///
 /// Any transactions with missing prevouts will be filtered out of the response, rather than returned with incorrect data.
@@ -887,26 +911,31 @@ fn handle_request(
 
             let mut txs = vec![];
 
-            if let Some(given_txid) = &after_txid {
-                let is_mempool = query
-                    .mempool()
-                    .history_txids_iter(&script_hash[..])
-                    .any(|txid| given_txid == &txid);
-                let is_confirmed = if is_mempool {
-                    false
-                } else {
-                    query
-                        .chain()
-                        .history_txids_iter(&script_hash[..])
-                        .any(|txid| given_txid == &txid)
-                };
-                if !is_mempool && !is_confirmed {
+            let after_txid_location = if let Some(txid) = &after_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let confirmed_block_height = match after_txid_location {
+                TxidLocation::Mempool => {
+                    txs.extend(
+                        query
+                            .mempool()
+                            .history(&script_hash[..], after_txid.as_ref(), max_txs)
+                            .into_iter()
+                            .map(|tx| (tx, None)),
+                    );
+                    None
+                }
+                TxidLocation::None => {
                     return Err(HttpError(
                         StatusCode::UNPROCESSABLE_ENTITY,
                         String::from("after_txid not found"),
                     ));
                 }
-            }
+                TxidLocation::Chain(height) => Some(height),
+            };
 
             txs.extend(
                 query
@@ -927,9 +956,107 @@ fn handle_request(
                 txs.extend(
                     query
                         .chain()
-                        .history(&script_hash[..], after_txid_ref, max_txs - txs.len())
-                        .into_iter()
-                        .map(|(tx, blockid)| (tx, Some(blockid))),
+                        .history(
+                            &script_hash[..],
+                            after_txid_ref,
+                            confirmed_block_height,
+                            max_txs - txs.len(),
+                        )
+                        .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+
+            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+        }
+
+        (&Method::POST, Some(script_types @ &"addresses"), Some(&"txs"), None, None, None)
+        | (&Method::POST, Some(script_types @ &"scripthashes"), Some(&"txs"), None, None, None) => {
+            let script_type = match *script_types {
+                "addresses" => "address",
+                "scripthashes" => "scripthash",
+                _ => "",
+            };
+
+            if multi_address_too_long(&body) {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            if script_hashes.len() > MULTI_ADDRESS_LIMIT {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<[u8; 32]> = script_hashes
+                .iter()
+                .filter_map(|script_str| {
+                    to_scripthash(script_type, script_str, config.network_type).ok()
+                })
+                .collect();
+
+            let max_txs = query_params
+                .get("max_txs")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(config.rest_default_max_mempool_txs);
+            let after_txid = query_params
+                .get("after_txid")
+                .and_then(|s| s.parse::<Txid>().ok());
+
+            let mut txs = vec![];
+
+            let after_txid_location = if let Some(txid) = &after_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let confirmed_block_height = match after_txid_location {
+                TxidLocation::Mempool => {
+                    txs.extend(
+                        query
+                            .mempool()
+                            .history_group(&script_hashes, after_txid.as_ref(), max_txs)
+                            .into_iter()
+                            .map(|tx| (tx, None)),
+                    );
+                    None
+                }
+                TxidLocation::None => {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+                TxidLocation::Chain(height) => Some(height),
+            };
+
+            if txs.len() < max_txs {
+                let after_txid_ref = if !txs.is_empty() {
+                    // If there are any txs, we know mempool found the
+                    // after_txid IF it exists... so always return None.
+                    None
+                } else {
+                    after_txid.as_ref()
+                };
+                txs.extend(
+                    query
+                        .chain()
+                        .history_group(
+                            &script_hashes,
+                            after_txid_ref,
+                            confirmed_block_height,
+                            max_txs - txs.len(),
+                        )
+                        .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                        .collect::<Result<Vec<_>, _>>()?,
                 );
             }
 
@@ -961,10 +1088,9 @@ fn handle_request(
 
             let txs = query
                 .chain()
-                .history(&script_hash[..], last_seen_txid.as_ref(), max_txs)
-                .into_iter()
-                .map(|(tx, blockid)| (tx, Some(blockid)))
-                .collect();
+                .history(&script_hash[..], last_seen_txid.as_ref(), None, max_txs)
+                .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                .collect::<Result<Vec<_>, _>>()?;
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
@@ -994,9 +1120,110 @@ fn handle_request(
                     .unwrap_or(config.rest_default_max_address_summary_txs),
             );
 
-            let summary = query
-                .chain()
-                .summary(&script_hash[..], last_seen_txid.as_ref(), max_txs);
+            let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let confirmed_block_height = match last_seen_txid_location {
+                TxidLocation::Mempool => None,
+                TxidLocation::None => {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+                TxidLocation::Chain(height) => Some(height),
+            };
+
+            let summary = query.chain().summary(
+                &script_hash[..],
+                last_seen_txid.as_ref(),
+                confirmed_block_height,
+                max_txs,
+            );
+
+            json_response(summary, TTL_SHORT)
+        }
+        (
+            &Method::POST,
+            Some(script_types @ &"addresses"),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+            None,
+        )
+        | (
+            &Method::POST,
+            Some(script_types @ &"scripthashes"),
+            Some(&"txs"),
+            Some(&"summary"),
+            last_seen_txid,
+            None,
+        ) => {
+            let script_type = match *script_types {
+                "addresses" => "address",
+                "scripthashes" => "scripthash",
+                _ => "",
+            };
+
+            if multi_address_too_long(&body) {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<String> =
+                serde_json::from_slice(&body).map_err(|err| HttpError::from(err.to_string()))?;
+
+            if script_hashes.len() > MULTI_ADDRESS_LIMIT {
+                return Err(HttpError(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    String::from("body too long"),
+                ));
+            }
+
+            let script_hashes: Vec<[u8; 32]> = script_hashes
+                .iter()
+                .filter_map(|script_str| {
+                    to_scripthash(script_type, script_str, config.network_type).ok()
+                })
+                .collect();
+
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let max_txs = cmp::min(
+                config.rest_default_max_address_summary_txs,
+                query_params
+                    .get("max_txs")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(config.rest_default_max_address_summary_txs),
+            );
+
+            let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
+                find_txid(txid, &query.mempool(), query.chain())
+            } else {
+                TxidLocation::Mempool
+            };
+
+            let confirmed_block_height = match last_seen_txid_location {
+                TxidLocation::Mempool => None,
+                TxidLocation::None => {
+                    return Err(HttpError(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        String::from("after_txid not found"),
+                    ));
+                }
+                TxidLocation::Chain(height) => Some(height),
+            };
+
+            let summary = query.chain().summary_group(
+                &script_hashes,
+                last_seen_txid.as_ref(),
+                confirmed_block_height,
+                max_txs,
+            );
 
             json_response(summary, TTL_SHORT)
         }
@@ -1495,8 +1722,8 @@ fn handle_request(
                 query
                     .chain()
                     .asset_history(&asset_id, None, config.rest_default_chain_txs_per_page)
-                    .into_iter()
-                    .map(|(tx, blockid)| (tx, Some(blockid))),
+                    .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                    .collect::<Result<Vec<_>, _>>()?,
             );
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
@@ -1521,9 +1748,8 @@ fn handle_request(
                     last_seen_txid.as_ref(),
                     config.rest_default_chain_txs_per_page,
                 )
-                .into_iter()
-                .map(|(tx, blockid)| (tx, Some(blockid)))
-                .collect();
+                .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
+                .collect::<Result<Vec<_>, _>>()?;
 
             json_response(prepare_txs(txs, query, config), TTL_SHORT)
         }
@@ -1702,6 +1928,15 @@ fn parse_scripthash(scripthash: &str) -> Result<FullHash, HttpError> {
     } else {
         Ok(full_hash(&bytes))
     }
+}
+
+#[inline]
+fn multi_address_too_long(body: &hyper::body::Bytes) -> bool {
+    // ("",) (3) (quotes and comma between each entry)
+    // (\n    ) (5) (allows for pretty printed JSON with 4 space indent)
+    // The opening [] and whatnot don't need to be accounted for, we give more than enough leeway
+    // p2tr and p2wsh are 55 length, scripthashes are 64.
+    body.len() > (8 + 64) * MULTI_ADDRESS_LIMIT
 }
 
 #[derive(Debug)]

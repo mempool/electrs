@@ -177,6 +177,49 @@ impl Mempool {
             .collect()
     }
 
+    pub fn history_group(
+        &self,
+        scripthashes: &[[u8; 32]],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+    ) -> Vec<Transaction> {
+        let _timer = self
+            .latency
+            .with_label_values(&["history_group"])
+            .start_timer();
+        scripthashes
+            .iter()
+            .filter_map(|scripthash| self.history.get(&scripthash[..]))
+            .flat_map(|entries| entries.iter())
+            .map(|e| e.get_txid())
+            .unique()
+            // TODO seek directly to last seen tx without reading earlier rows
+            .skip_while(|txid| {
+                // skip until we reach the last_seen_txid
+                last_seen_txid.map_or(false, |last_seen_txid| last_seen_txid != txid)
+            })
+            .skip(match last_seen_txid {
+                Some(_) => 1, // skip the last_seen_txid itself
+                None => 0,
+            })
+            .take(limit)
+            .map(|txid| self.txstore.get(&txid).expect("missing mempool tx"))
+            .cloned()
+            .collect()
+    }
+
+    pub fn history_txids_iter_group<'a>(
+        &'a self,
+        scripthashes: &'a [[u8; 32]],
+    ) -> impl Iterator<Item = Txid> + 'a {
+        scripthashes
+            .iter()
+            .filter_map(move |scripthash| self.history.get(&scripthash[..]))
+            .flat_map(|entries| entries.iter())
+            .map(|entry| entry.get_txid())
+            .unique()
+    }
+
     pub fn history_txids(&self, scripthash: &[u8], limit: usize) -> Vec<Txid> {
         let _timer = self
             .latency
