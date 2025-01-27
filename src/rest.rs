@@ -51,8 +51,6 @@ const ASSETS_PER_PAGE: usize = 25;
 #[cfg(feature = "liquid")]
 const ASSETS_MAX_PER_PAGE: usize = 100;
 
-const TTL_LONG: u32 = 157_784_630; // ttl for static resources (5 years)
-const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
@@ -532,12 +530,22 @@ impl From<SpendingInput> for SpendingValue {
     }
 }
 
-fn ttl_by_depth(height: Option<usize>, query: &Query) -> u32 {
-    height.map_or(TTL_SHORT, |height| {
+#[inline]
+fn ttl_long(config: &Config) -> u32 {
+    // Regtest networks change often, so they should always have short TTL
+    if config.network_type.is_regtest() {
+        config.mempool_rest_ttl_short
+    } else {
+        config.mempool_rest_ttl_long
+    }
+}
+
+fn ttl_by_depth(height: Option<usize>, query: &Query, config: &Config) -> u32 {
+    height.map_or(config.mempool_rest_ttl_short, |height| {
         if query.chain().best_height() - height >= CONF_FINAL {
-            TTL_LONG
+            ttl_long(config)
         } else {
-            TTL_SHORT
+            config.mempool_rest_ttl_short
         }
     })
 }
@@ -735,13 +743,13 @@ fn handle_request(
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_hash().to_hex(),
-            TTL_SHORT,
+            config.mempool_rest_ttl_short,
         ),
 
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"height"), None, None) => http_message(
             StatusCode::OK,
             query.chain().best_height().to_string(),
-            TTL_SHORT,
+            config.mempool_rest_ttl_short,
         ),
 
         (&Method::GET, Some(&"blocks"), start_height, None, None, None) => {
@@ -754,7 +762,7 @@ fn handle_request(
                 .chain()
                 .header_by_height(height)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
-            let ttl = ttl_by_depth(Some(height), query);
+            let ttl = ttl_by_depth(Some(height), query, config);
             http_message(StatusCode::OK, header.hash().to_hex(), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), None, None, None) => {
@@ -764,12 +772,12 @@ fn handle_request(
                 .get_block_with_meta(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             let block_value = BlockValue::new(blockhm);
-            json_response(block_value, TTL_LONG)
+            json_response(block_value, ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
             let status = query.chain().get_block_status(&hash);
-            let ttl = ttl_by_depth(status.height, query);
+            let ttl = ttl_by_depth(status.height, query, config);
             json_response(status, ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txids"), None, None) => {
@@ -778,7 +786,7 @@ fn handle_request(
                 .chain()
                 .get_block_txids(&hash)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
-            json_response(txids, TTL_LONG)
+            json_response(txids, ttl_long(config))
         }
         (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -791,7 +799,7 @@ fn handle_request(
                 .map(|tx| (tx, block_id.clone()))
                 .collect();
 
-            let ttl = ttl_by_depth(block_id.map(|b| b.height), query);
+            let ttl = ttl_by_depth(block_id.map(|b| b.height), query, config);
             json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
@@ -802,7 +810,7 @@ fn handle_request(
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
 
             let header_hex = hex::encode(encode::serialize(&header));
-            http_message(StatusCode::OK, header_hex, TTL_LONG)
+            http_message(StatusCode::OK, header_hex, ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"raw"), None, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -814,7 +822,10 @@ fn handle_request(
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/octet-stream")
-                .header("Cache-Control", format!("public, max-age={:}", TTL_LONG))
+                .header(
+                    "Cache-Control",
+                    format!("public, max-age={:}", ttl_long(config)),
+                )
                 .header("X-Powered-By", &**VERSION_STRING)
                 .body(Body::from(raw))
                 .unwrap())
@@ -829,7 +840,7 @@ fn handle_request(
             if index >= txids.len() {
                 bail!(HttpError::not_found("tx index out of range".to_string()));
             }
-            http_message(StatusCode::OK, txids[index].to_hex(), TTL_LONG)
+            http_message(StatusCode::OK, txids[index].to_hex(), ttl_long(config))
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), start_index, None) => {
             let hash = BlockHash::from_hex(hash)?;
@@ -864,8 +875,8 @@ fn handle_request(
                 })
                 .collect::<Result<Vec<(Transaction, Option<BlockId>)>, _>>()?;
 
-            // XXX orphraned blocks alway get TTL_SHORT
-            let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query);
+            // XXX orphraned blocks alway get config.mempool_rest_ttl_short
+            let ttl = ttl_by_depth(confirmed_blockid.map(|b| b.height), query, config);
 
             json_response(prepare_txs(txs, query, config), ttl)
         }
@@ -879,7 +890,7 @@ fn handle_request(
                     "chain_stats": stats.0,
                     "mempool_stats": stats.1,
                 }),
-                TTL_SHORT,
+                config.mempool_rest_ttl_short,
             )
         }
         (
@@ -1050,7 +1061,10 @@ fn handle_request(
                 );
             }
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
 
         (
@@ -1082,7 +1096,10 @@ fn handle_request(
                 .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
         (
             &Method::GET,
@@ -1215,7 +1232,7 @@ fn handle_request(
                 max_txs,
             );
 
-            json_response(summary, TTL_SHORT)
+            json_response(summary, config.mempool_rest_ttl_short)
         }
         (
             &Method::GET,
@@ -1246,7 +1263,10 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
 
         (
@@ -1272,14 +1292,14 @@ fn handle_request(
                 .map(UtxoValue::from)
                 .collect();
             // XXX paging?
-            json_response(utxos, TTL_SHORT)
+            json_response(utxos, config.mempool_rest_ttl_short)
         }
         (&Method::GET, Some(&"address-prefix"), Some(prefix), None, None, None) => {
             if !config.address_search {
                 return Err(HttpError::from("address search disabled".to_string()));
             }
             let results = query.chain().address_search(prefix, ADDRESS_SEARCH_LIMIT);
-            json_response(results, TTL_SHORT)
+            json_response(results, config.mempool_rest_ttl_short)
         }
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
             let hash = Txid::from_hex(hash)?;
@@ -1287,7 +1307,7 @@ fn handle_request(
                 .lookup_txn(&hash)
                 .ok_or_else(|| HttpError::not_found("Transaction not found".to_string()))?;
             let blockid = query.chain().tx_confirming_block(&hash);
-            let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query);
+            let ttl = ttl_by_depth(blockid.as_ref().map(|b| b.height), query, config);
 
             let mut tx = prepare_txs(vec![(tx, blockid)], query, config);
 
@@ -1336,7 +1356,7 @@ fn handle_request(
                 "hex" => ("text/plain", Body::from(hex::encode(rawtx))),
                 _ => unreachable!(),
             };
-            let ttl = ttl_by_depth(query.get_tx_status(&hash).block_height, query);
+            let ttl = ttl_by_depth(query.get_tx_status(&hash).block_height, query, config);
 
             Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -1349,7 +1369,7 @@ fn handle_request(
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"status"), None, None) => {
             let hash = Txid::from_hex(hash)?;
             let status = query.get_tx_status(&hash);
-            let ttl = ttl_by_depth(status.block_height, query);
+            let ttl = ttl_by_depth(status.block_height, query, config);
             json_response(status, ttl)
         }
 
@@ -1361,7 +1381,7 @@ fn handle_request(
             let (merkle, pos) =
                 electrum_merkle::get_tx_merkle_proof(query.chain(), &hash, &blockid.hash)?;
             let merkle: Vec<String> = merkle.into_iter().map(|txid| txid.to_hex()).collect();
-            let ttl = ttl_by_depth(Some(blockid.height), query);
+            let ttl = ttl_by_depth(Some(blockid.height), query, config);
             json_response(
                 json!({ "block_height": blockid.height, "merkle": merkle, "pos": pos }),
                 ttl,
@@ -1382,7 +1402,7 @@ fn handle_request(
             http_message(
                 StatusCode::OK,
                 hex::encode(encode::serialize(&merkleblock)),
-                ttl_by_depth(height, query),
+                ttl_by_depth(height, query, config),
             )
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspend"), Some(index), None) => {
@@ -1397,6 +1417,7 @@ fn handle_request(
             let ttl = ttl_by_depth(
                 spend.status.as_ref().and_then(|status| status.block_height),
                 query,
+                config,
             );
             json_response(spend, ttl)
         }
@@ -1411,7 +1432,7 @@ fn handle_request(
                 .map(|spend| spend.map_or_else(SpendingValue::default, SpendingValue::from))
                 .collect();
             // @TODO long ttl if all outputs are either spent long ago or unspendable
-            json_response(spends, TTL_SHORT)
+            json_response(spends, config.mempool_rest_ttl_short)
         }
         (&Method::GET, Some(&"broadcast"), None, None, None, None)
         | (&Method::POST, Some(&"tx"), None, None, None, None) => {
@@ -1552,7 +1573,7 @@ fn handle_request(
                 })
                 .collect();
 
-            json_response(spends, TTL_SHORT)
+            json_response(spends, config.mempool_rest_ttl_short)
         }
         (
             &Method::POST,
@@ -1583,7 +1604,7 @@ fn handle_request(
                 })
                 .collect();
 
-            json_response(spends, TTL_SHORT)
+            json_response(spends, config.mempool_rest_ttl_short)
         }
         (
             &Method::POST,
@@ -1615,14 +1636,15 @@ fn handle_request(
                 })
                 .collect();
 
-            json_response(spends, TTL_SHORT)
+            json_response(spends, config.mempool_rest_ttl_short)
         }
 
-        (&Method::GET, Some(&"mempool"), None, None, None, None) => {
-            json_response(query.mempool().backlog_stats(), TTL_SHORT)
-        }
+        (&Method::GET, Some(&"mempool"), None, None, None, None) => json_response(
+            query.mempool().backlog_stats(),
+            config.mempool_rest_ttl_short,
+        ),
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
-            json_response(query.mempool().txids(), TTL_SHORT)
+            json_response(query.mempool().txids(), config.mempool_rest_ttl_short)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
@@ -1632,7 +1654,7 @@ fn handle_request(
                 .unwrap_or(config.rest_max_mempool_txid_page_size);
             json_response(
                 query.mempool().txids_page(max_txs, last_seen_txid),
-                TTL_SHORT,
+                config.mempool_rest_ttl_short,
             )
         }
         (
@@ -1650,7 +1672,10 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
         (&Method::POST, Some(&INTERNAL_PREFIX), Some(&"mempool"), Some(&"txs"), None, None) => {
             let txid_strings: Vec<String> =
@@ -1695,7 +1720,10 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
         (&Method::GET, Some(&"mempool"), Some(&"recent"), None, None, None) => {
             let mempool = query.mempool();
@@ -1704,7 +1732,7 @@ fn handle_request(
         }
 
         (&Method::GET, Some(&"fee-estimates"), None, None, None, None) => {
-            json_response(query.estimate_fee_map(), TTL_SHORT)
+            json_response(query.estimate_fee_map(), config.mempool_rest_ttl_short)
         }
 
         #[cfg(feature = "liquid")]
@@ -1741,7 +1769,7 @@ fn handle_request(
                 .lookup_asset(&asset_id)?
                 .ok_or_else(|| HttpError::not_found("Asset id not found".to_string()))?;
 
-            json_response(asset_entry, TTL_SHORT)
+            json_response(asset_entry, config.mempool_rest_ttl_short)
         }
 
         #[cfg(feature = "liquid")]
@@ -1766,7 +1794,10 @@ fn handle_request(
                     .collect::<Result<Vec<_>, _>>()?,
             );
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
 
         #[cfg(feature = "liquid")]
@@ -1791,7 +1822,10 @@ fn handle_request(
                 .map(|res| res.map(|(tx, blockid)| (tx, Some(blockid))))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
 
         #[cfg(feature = "liquid")]
@@ -1805,7 +1839,10 @@ fn handle_request(
                 .map(|tx| (tx, None))
                 .collect();
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            json_response(
+                prepare_txs(txs, query, config),
+                config.mempool_rest_ttl_short,
+            )
         }
 
         #[cfg(feature = "liquid")]
@@ -1822,9 +1859,17 @@ fn handle_request(
 
             if param == Some(&"decimal") && precision > 0 {
                 let supply_dec = supply as f64 / 10u32.pow(precision.into()) as f64;
-                http_message(StatusCode::OK, supply_dec.to_string(), TTL_SHORT)
+                http_message(
+                    StatusCode::OK,
+                    supply_dec.to_string(),
+                    config.mempool_rest_ttl_short,
+                )
             } else {
-                http_message(StatusCode::OK, supply.to_string(), TTL_SHORT)
+                http_message(
+                    StatusCode::OK,
+                    supply.to_string(),
+                    config.mempool_rest_ttl_short,
+                )
             }
         }
 
@@ -1916,7 +1961,7 @@ fn blocks(
             break;
         }
     }
-    json_response(values, TTL_SHORT)
+    json_response(values, config.mempool_rest_ttl_short)
 }
 
 fn to_scripthash(
