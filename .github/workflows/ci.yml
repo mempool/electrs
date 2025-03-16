@@ -28,7 +28,6 @@ jobs:
         uses: './.github/actions/ci-rust-setup'
         with:
           components: rustfmt
-          toolchain: "1.84"
       - run: cargo fmt --all -- --check
 
   test:
