@@ -31,14 +31,39 @@ runs:
           RUST_TOOLCHAIN="$(cat rust-toolchain)"
         fi
         echo "toolchain=\"${RUST_TOOLCHAIN}\"" >> $GITHUB_OUTPUT
-    - name: Install ${{ steps.gettoolchain.outputs.toolchain }} Rust toolchain
-      id: toolchain
-      # Commit date is Nov 18, 2024
-      uses: dtolnay/rust-toolchain@315e265cd78dad1e1dcf3a5074f6d6c47029d5aa
-      with:
-        toolchain: ${{ steps.gettoolchain.outputs.toolchain }}
-        targets: ${{ inputs.targets }}
-        components: ${{ inputs.components }}
+
+    - name: Install Rustup
+      shell: bash
+      run: |-
+        if ! command -v rustup >/dev/null 2>&1; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        fi
+
+    - name: Install Rust Toolchain
+      shell: bash
+      run: |-
+        rustup update "${{ steps.gettoolchain.outputs.toolchain }}" --no-self-update
+        rustup default "${{ steps.gettoolchain.outputs.toolchain }}"
+
+        # Install additional targets if specified
+        if [ -n "${{ inputs.targets }}" ]; then
+          rustup target add ${{ inputs.targets }}
+        fi
+
+        # Install additional components if specified
+        if [ -n "${{ inputs.components }}" ]; then
+          rustup component add ${{ inputs.components }}
+        fi
+
+    - name: Generate Cache Key
+      id: cachekey
+      shell: bash
+      run: |-
+        # Generate a cache key based on toolchain and rustc version
+        RUSTC_VERSION=$(rustc --version | sha256sum | cut -d' ' -f1)
+        echo "cachekey=${{ steps.gettoolchain.outputs.toolchain }}-$RUSTC_VERSION" >> $GITHUB_OUTPUT
+
     - name: Cache dependencies
       uses: actions/cache@v3
       if: inputs.cache-name != ''
@@ -47,4 +72,4 @@ runs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ inputs.cache-name }}-${{ steps.cachekey.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
