@@ -783,10 +783,20 @@ fn handle_request(
         (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
             let hash = BlockHash::from_hex(hash)?;
             let block_id = query.chain().blockid_by_hash(&hash);
+
+            let block_id =
+                Some(block_id.ok_or_else(|| {
+                    HttpError::not_found("Block with hash not found".to_string())
+                })?);
+
             let txs = query
                 .chain()
                 .get_block_txs(&hash)
-                .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?
+                .ok_or_else(|| {
+                    HttpError::not_found(
+                        "Transactions could not be queried from block.".to_string(),
+                    )
+                })?
                 .into_iter()
                 .map(|tx| (tx, block_id.clone()))
                 .collect();
