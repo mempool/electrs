@@ -118,6 +118,15 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         );
     }
 
+    if std::env::var("ELECTRS_PERIODIC_THREAD_LOGGER").is_ok() {
+        electrs::util::spawn_thread("periodic_thread_logger", || loop {
+            electrs::util::with_spawned_threads(|threads| {
+                debug!("THREADS: {:?}", threads);
+            });
+            std::thread::sleep(std::time::Duration::from_millis(5000));
+        });
+    }
+
     loop {
         if let Err(err) = signal.wait(Duration::from_millis(config.main_loop_delay), true) {
             info!("stopping server: {}", err);
