@@ -610,10 +610,32 @@ impl Daemon {
         blockhash: &BlockHash,
         verbose: bool,
     ) -> Result<Value> {
-        self.request(
+        match self.request(
             "getrawtransaction",
             json!([txid.to_hex(), verbose, blockhash]),
-        )
+        ) {
+            #[cfg(not(feature = "liquid"))]
+            Err(e)
+                if e.to_string().contains(
+                    "genesis block coinbase is not considered an ordinary transaction",
+                ) =>
+            {
+                let block = self.getblock(blockhash)?;
+
+                // Assert that there's only 1 tx, the previous block hash is all zeroes, and not using verbose
+                if verbose
+                    || block.txdata.len() != 1
+                    || block.header.prev_blockhash != BlockHash::default()
+                {
+                    Err(e)
+                } else {
+                    Ok(Value::String(bitcoin::consensus::encode::serialize_hex(
+                        &block.txdata[0],
+                    )))
+                }
+            }
+            res => res,
+        }
     }
 
     pub fn getmempooltx(&self, txhash: &Txid) -> Result<Transaction> {
