@@ -9,6 +9,17 @@ NODENAME=$(hostname|cut -d . -f1)
 LOCATION=$(hostname|cut -d . -f2)
 USAGE="Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet) [popular-scripts]"
 
+# set default log verbosity if unset
+if [ -z "${ELECTRS_LOG_VERBOSITY+x}" ];then
+    ELECTRS_LOG_VERBOSITY="-vv"
+# validate log verbosity if set
+# Can be -v, -vv, -vvv, -vvvv or "" (set to empty string)
+elif [[ -n "${ELECTRS_LOG_VERBOSITY}" && ! "${ELECTRS_LOG_VERBOSITY}" =~ ^-v{1,4}$ ]];then
+    echo "[!] ELECTRS_LOG_VERBOSITY variable is set to invalid value '${ELECTRS_LOG_VERBOSITY}'." >&2
+	echo "[!] It must be one of: -v, -vv, -vvv, -vvvv or \"\". If unset it will default to -vv." >&2
+    exit 1
+fi
+
 # load rust if necessary
 if [ -e "${HOME}/.cargo/env" ];then
 	source "${HOME}/.cargo/env"
@@ -229,6 +240,6 @@ do
 		--address-search \
 		--utxos-limit "${UTXOS_LIMIT}" \
 		--electrum-txs-limit "${ELECTRUM_TXS_LIMIT}" \
-		-vv
+		"${ELECTRS_LOG_VERBOSITY}"
 	sleep 1
 done

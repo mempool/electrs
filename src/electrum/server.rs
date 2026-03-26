@@ -7,6 +7,7 @@ use std::net::IpAddr;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
@@ -903,7 +904,28 @@ impl RPC {
                             discovery,
                         );
                         senders.lock().unwrap().push(conn.chan.sender());
-                        conn.run();
+                        // unwind any panics inside the connection for logging
+                        //
+                        // Safety: we use AssertUnwindSafe because we don't have any
+                        //         interior mutability that could be left in an invalid state
+                        //         after a panic. We just log and exit the thread.
+                        let result = catch_unwind(AssertUnwindSafe(|| {
+                            conn.run();
+                        }));
+                        // panic occurred
+                        if let Err(err) = result {
+                            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                                *s
+                            } else if let Some(s) = err.downcast_ref::<String>() {
+                                s.as_str()
+                            } else {
+                                "(unknown panic payload)"
+                            };
+                            error!("[{}] connection panicked: {}", addr, msg);
+                            // Forward the panic for now just to keep the behavior similar to before
+                            // (Although panics were silently ignored before, so it's not the same)
+                            std::panic::panic_any(err);
+                        }
                         info!("[{}] disconnected peer", addr);
                         let _ = killer_clone.send(());
                         let _ = garbage_sender.send(std::thread::current().id());

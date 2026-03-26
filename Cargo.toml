@@ -69,7 +69,7 @@ tempfile = "3.0"
 
 [profile.release]
 lto = true
-panic = 'abort'
+panic = 'unwind'
 codegen-units = 1
 
 [patch.crates-io.electrum-client]
