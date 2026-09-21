@@ -22,7 +22,9 @@ use crate::new_index::{
     SpendingInput, TxHistoryInfo, Utxo,
 };
 use crate::util::fees::{make_fee_histogram, TxFeeInfo};
-use crate::util::{extract_tx_prevouts, full_hash, has_prevout, is_spendable, Bytes};
+use crate::util::{
+    extract_tx_prevouts, full_hash, has_prevout, is_spendable, Bytes, TxHistoryFilter,
+};
 
 #[cfg(feature = "liquid")]
 use crate::elements::asset;
@@ -143,6 +145,45 @@ impl Mempool {
             .map_or_else(std::vec::Vec::new, |entries| {
                 self._history(entries, last_seen_txid, limit)
             })
+    }
+
+    pub fn history_filtered(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        limit: usize,
+        filter: &TxHistoryFilter,
+    ) -> Vec<Transaction> {
+        let _timer = self
+            .latency
+            .with_label_values(&["history_filtered"])
+            .start_timer();
+
+        let entries = match self.history.get(scripthash) {
+            Some(entries) => entries,
+            None => return vec![],
+        };
+
+        let mut net_values: HashMap<Txid, i64> = HashMap::new();
+        for entry in entries {
+            let value = net_values.entry(entry.get_txid()).or_insert(0);
+            *value = value.saturating_add(entry.net_delta());
+        }
+
+        entries
+            .iter()
+            .map(|e| e.get_txid())
+            .unique()
+            .skip_while(|txid| last_seen_txid.is_some_and(|last_seen_txid| last_seen_txid != txid))
+            .skip(match last_seen_txid {
+                Some(_) => 1,
+                None => 0,
+            })
+            .filter(|txid| filter.matches(net_values[txid], None))
+            .take(limit)
+            .map(|txid| self.txstore.get(&txid).expect("missing mempool tx"))
+            .cloned()
+            .collect()
     }
 
     pub fn history_txids_iter<'a>(&'a self, scripthash: &[u8]) -> impl Iterator<Item = Txid> + 'a {

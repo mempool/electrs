@@ -15,7 +15,7 @@ use elements::{
     AssetId,
 };
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::convert::TryInto;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -29,7 +29,7 @@ use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics};
 use crate::util::{
     bincode_util, full_hash, has_prevout, is_spendable, BlockHeaderMeta, BlockId, BlockMeta,
-    BlockStatus, Bytes, HeaderEntry, HeaderList, ScriptToAddr,
+    BlockStatus, Bytes, HeaderEntry, HeaderList, ScriptToAddr, TxHistoryFilter,
 };
 
 use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB};
@@ -813,6 +813,60 @@ impl ChainQuery {
             .unique()
     }
 
+    fn collate_history_entries<'a>(
+        &'a self,
+        rows: impl Iterator<Item = TxHistoryRow> + 'a,
+        last_seen_txid: Option<&'a Txid>,
+    ) -> impl Iterator<Item = TxHistoryEntry> + 'a {
+        let mut rows = rows.peekable();
+        let mut seen_txids: HashSet<Txid> = HashSet::new();
+        let mut reached_cursor = last_seen_txid.is_none();
+        let mut pending: VecDeque<SlotTx> = VecDeque::new();
+
+        std::iter::from_fn(move || loop {
+            if pending.is_empty() {
+                let row = rows.next()?;
+                let slot = (row.key.confirmed_height, row.key.tx_position);
+                let mut slot_rows = vec![row];
+                while rows
+                    .peek()
+                    .is_some_and(|next| (next.key.confirmed_height, next.key.tx_position) == slot)
+                {
+                    slot_rows.push(rows.next().expect("peeked row"));
+                }
+                pending.extend(collate_slot(slot_rows));
+            }
+            let SlotTx {
+                txid,
+                row_height,
+                tx_position,
+                value,
+            } = pending.pop_front().expect("filled above");
+
+            if !seen_txids.insert(txid) {
+                continue;
+            }
+
+            if !reached_cursor {
+                reached_cursor = last_seen_txid == Some(&txid);
+                continue;
+            }
+
+            let blockid = match self.tx_confirming_block(&txid) {
+                Some(blockid) => blockid,
+                None => continue,
+            };
+
+            return Some(TxHistoryEntry {
+                txid,
+                blockid,
+                row_height,
+                tx_position,
+                value,
+            });
+        })
+    }
+
     fn _history<'a>(
         &'a self,
         code: u8,
@@ -843,6 +897,79 @@ impl ChainQuery {
                 }),
             limit,
         )
+    }
+
+    pub fn history_filtered(
+        &self,
+        scripthash: &[u8],
+        last_seen_txid: Option<&Txid>,
+        start_height: Option<u32>,
+        limit: usize,
+        filter: &TxHistoryFilter,
+        scan_limit: usize,
+    ) -> Result<(Vec<HistoryTx>, ScanOutcome)> {
+        let _timer_scan = self.start_timer("history_filtered");
+
+        if limit == 0 {
+            return Ok((vec![], ScanOutcome::default()));
+        }
+
+        let height_range = {
+            let headers = self.store.indexed_headers.read().unwrap();
+            filter.height_range(headers.iter().map(|header| header.header().time))
+        };
+        let (lowest, highest) = match height_range {
+            Some(range) => range,
+            None => return Ok((vec![], ScanOutcome::default())),
+        };
+
+        let (start_height, last_seen_txid) = match (start_height, highest) {
+            (Some(cursor_height), Some(highest)) if highest < cursor_height => {
+                (Some(highest), None)
+            }
+            (None, Some(highest)) if last_seen_txid.is_none() => (Some(highest), None),
+            _ => (start_height, last_seen_txid),
+        };
+
+        let entries = self.collate_history_entries(
+            self.history_iter_scan_reverse(b'H', scripthash, start_height)
+                .map(TxHistoryRow::from_row),
+            last_seen_txid,
+        );
+
+        let mut truncated = false;
+        let mut last_scanned_txid = None;
+        let mut matches = Vec::new();
+
+        for (scanned, entry) in entries.enumerate() {
+            if lowest.is_some_and(|lowest| entry.row_height < lowest) {
+                break;
+            }
+            if scanned >= scan_limit {
+                truncated = true;
+                break;
+            }
+            last_scanned_txid = Some(entry.txid);
+
+            if filter.matches(entry.value, Some(&entry.blockid)) {
+                matches.push((entry.txid, entry.blockid, entry.tx_position));
+                if matches.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        let txs = self
+            .lookup_txns(matches.into_iter(), limit)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok((
+            txs,
+            ScanOutcome {
+                truncated,
+                last_scanned_txid,
+            },
+        ))
     }
 
     pub fn history_txids(&self, scripthash: &[u8], limit: usize) -> Vec<(Txid, BlockId)> {
@@ -1909,6 +2036,21 @@ impl TxHistoryInfo {
             TxHistoryInfo::Burning(_) | TxHistoryInfo::Pegout(_) => false,
         }
     }
+
+    #[cfg(not(feature = "liquid"))]
+    pub fn net_delta(&self) -> i64 {
+        match self {
+            TxHistoryInfo::Funding(info) => info.value.try_into().unwrap_or(0),
+            TxHistoryInfo::Spending(info) => {
+                0_i64.saturating_sub(info.value.try_into().unwrap_or(0))
+            }
+        }
+    }
+
+    #[cfg(feature = "liquid")]
+    pub fn net_delta(&self) -> i64 {
+        0
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2015,6 +2157,56 @@ pub struct TxHistorySummary {
     value: i64,
     time: u32,
     tx_position: u16,
+}
+
+type HistoryTx = (Transaction, BlockId, u16);
+
+struct TxHistoryEntry {
+    txid: Txid,
+    blockid: BlockId,
+    row_height: u32,
+    tx_position: u16,
+    value: i64,
+}
+
+struct SlotTx {
+    txid: Txid,
+    row_height: u32,
+    tx_position: u16,
+    value: i64,
+}
+
+fn collate_slot(rows: Vec<TxHistoryRow>) -> Vec<SlotTx> {
+    let mut txs: Vec<(SlotTx, Vec<(u32, bool)>)> = Vec::new();
+    for row in rows {
+        let txid = row.get_txid();
+        let entry = (row.key.txinfo.get_vin_or_vout(), row.key.txinfo.has_vin());
+        let delta = row.key.txinfo.net_delta();
+        match txs.iter_mut().find(|(tx, _)| tx.txid == txid) {
+            Some((tx, entries)) => {
+                if !entries.contains(&entry) {
+                    entries.push(entry);
+                    tx.value = tx.value.saturating_add(delta);
+                }
+            }
+            None => txs.push((
+                SlotTx {
+                    txid,
+                    row_height: row.key.confirmed_height,
+                    tx_position: row.key.tx_position,
+                    value: delta,
+                },
+                vec![entry],
+            )),
+        }
+    }
+    txs.into_iter().map(|(tx, _)| tx).collect()
+}
+
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    pub truncated: bool,
+    pub last_scanned_txid: Option<Txid>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2326,5 +2518,87 @@ mod tests {
                 0, 0, 5, 57
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod collate_slot_tests {
+    use super::*;
+
+    #[cfg(not(feature = "liquid"))]
+    fn value(sats: u64) -> Value {
+        sats
+    }
+
+    #[cfg(feature = "liquid")]
+    fn value(sats: u64) -> Value {
+        Value::Explicit(sats)
+    }
+
+    fn row(txinfo: TxHistoryInfo) -> TxHistoryRow {
+        TxHistoryRow {
+            key: TxHistoryKey {
+                code: b'H',
+                hash: [0; 32],
+                confirmed_height: 100,
+                tx_position: 5,
+                txinfo,
+            },
+        }
+    }
+
+    fn funding(txid: u8, vout: u32, sats: u64) -> TxHistoryRow {
+        row(TxHistoryInfo::Funding(FundingInfo {
+            txid: [txid; 32],
+            vout,
+            value: value(sats),
+        }))
+    }
+
+    fn spending(txid: u8, vin: u32, sats: u64) -> TxHistoryRow {
+        row(TxHistoryInfo::Spending(SpendingInfo {
+            txid: [txid; 32],
+            vin,
+            prev_txid: [0xff; 32],
+            prev_vout: 0,
+            value: value(sats),
+        }))
+    }
+
+    fn txid(byte: u8) -> Txid {
+        deserialize(&[byte; 32]).unwrap()
+    }
+
+    #[test]
+    fn interleaved_transactions_in_one_slot_stay_separate() {
+        let txs = collate_slot(vec![
+            spending(1, 0, 500),
+            spending(2, 0, 700),
+            funding(1, 0, 200),
+            funding(2, 1, 100),
+        ]);
+
+        assert_eq!(
+            txs.iter().map(|tx| tx.txid).collect::<Vec<_>>(),
+            vec![txid(1), txid(2)]
+        );
+        #[cfg(not(feature = "liquid"))]
+        assert_eq!(
+            txs.iter().map(|tx| tx.value).collect::<Vec<_>>(),
+            vec![-300, -600]
+        );
+    }
+
+    #[cfg(not(feature = "liquid"))]
+    #[test]
+    fn duplicate_rows_are_summed_once() {
+        let txs = collate_slot(vec![
+            funding(1, 0, 200),
+            funding(1, 0, 200),
+            funding(1, 1, 50),
+        ]);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].value, 250);
     }
 }
