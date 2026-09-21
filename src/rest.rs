@@ -11,6 +11,7 @@ use crate::util::{
     create_socket, electrum_merkle, extract_tx_prevouts, full_hash, get_innerscripts, get_tx_fee,
     has_prevout, is_coinbase, transaction_sigop_count, BlockHeaderMeta, BlockId, FullHash,
     IsProvablyUnspendable, ScriptToAddr, ScriptToAsm, SegwitDetection, TransactionStatus,
+    TxHistoryFilter,
 };
 
 #[cfg(not(feature = "liquid"))]
@@ -71,8 +72,12 @@ const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
-// internal api prefix
 const INTERNAL_PREFIX: &str = "internal";
+
+const HEADER_SCAN_TRUNCATED: &str = "X-Scan-Truncated";
+const HEADER_LAST_SCANNED_TXID: &str = "X-Last-Scanned-Txid";
+
+const EXPOSED_HEADERS: &str = "X-Scan-Truncated, X-Last-Scanned-Txid";
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -698,6 +703,10 @@ async fn run_server(
                     if let Some(ref origins) = config.cors {
                         resp.headers_mut()
                             .insert("Access-Control-Allow-Origin", origins.parse().unwrap());
+                        resp.headers_mut().insert(
+                            "Access-Control-Expose-Headers",
+                            HeaderValue::from_static(EXPOSED_HEADERS),
+                        );
                     }
                     if let Some(subver) = BITCOIND_SUBVER.get() {
                         resp.headers_mut()
@@ -975,6 +984,7 @@ fn handle_request(
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
+            let filter = TxHistoryFilter::from_query_params(&query_params)?;
 
             let mut txs = vec![];
 
@@ -986,13 +996,20 @@ fn handle_request(
 
             let confirmed_block_height = match after_txid_location {
                 TxidLocation::Mempool => {
-                    txs.extend(
-                        query
-                            .mempool()
-                            .history(&script_hash[..], after_txid.as_ref(), max_txs)
-                            .into_iter()
-                            .map(|tx| (tx, None)),
-                    );
+                    if !filter.excludes_mempool() {
+                        let mempool = query.mempool();
+                        let mempool_txs = if filter.is_empty() {
+                            mempool.history(&script_hash[..], after_txid.as_ref(), max_txs)
+                        } else {
+                            mempool.history_filtered(
+                                &script_hash[..],
+                                after_txid.as_ref(),
+                                max_txs,
+                                &filter,
+                            )
+                        };
+                        txs.extend(mempool_txs.into_iter().map(|tx| (tx, None)));
+                    }
                     None
                 }
                 TxidLocation::None => {
@@ -1004,21 +1021,39 @@ fn handle_request(
                 TxidLocation::Chain(height) => Some(height),
             };
 
+            let mut scan_outcome = None;
+
             if txs.len() < max_txs {
                 let after_txid_ref =
                     confirmed_after_txid(&after_txid_location, after_txid.as_ref());
-                let mut confirmed_txs = query
-                    .chain()
-                    .history(
+                let mut confirmed_txs = if filter.is_empty() {
+                    query
+                        .chain()
+                        .history(
+                            &script_hash[..],
+                            after_txid_ref,
+                            confirmed_block_height,
+                            max_txs - txs.len(),
+                        )
+                        .map(|res| {
+                            res.map(|(tx, blockid, tx_position)| (tx, Some(blockid), tx_position))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    let (matched, outcome) = query.chain().history_filtered(
                         &script_hash[..],
                         after_txid_ref,
                         confirmed_block_height,
                         max_txs - txs.len(),
-                    )
-                    .map(|res| {
-                        res.map(|(tx, blockid, tx_position)| (tx, Some(blockid), tx_position))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                        &filter,
+                        cmp::max(config.rest_max_address_txs_filter_scan, max_txs),
+                    )?;
+                    scan_outcome = Some(outcome);
+                    matched
+                        .into_iter()
+                        .map(|(tx, blockid, tx_position)| (tx, Some(blockid), tx_position))
+                        .collect()
+                };
                 confirmed_txs.sort_unstable_by(
                     |(_, blockid1, tx_position1), (_, blockid2, tx_position2)| {
                         blockid2
@@ -1035,7 +1070,15 @@ fn handle_request(
                 );
             }
 
-            json_response(prepare_txs(txs, query, config), TTL_SHORT)
+            let mut headers = vec![];
+            if let Some(outcome) = scan_outcome.filter(|outcome| outcome.truncated) {
+                headers.push((HEADER_SCAN_TRUNCATED, String::from("true")));
+                if let Some(txid) = outcome.last_scanned_txid {
+                    headers.push((HEADER_LAST_SCANNED_TXID, txid.to_string()));
+                }
+            }
+
+            json_response_with_headers(prepare_txs(txs, query, config), TTL_SHORT, &headers)
         }
 
         (&Method::POST, Some(script_types @ &"addresses"), Some(&"txs"), None, None, None)
@@ -2026,12 +2069,22 @@ where
 }
 
 fn json_response<T: Serialize>(value: T, ttl: u32) -> Result<Response<Body>, HttpError> {
+    json_response_with_headers(value, ttl, &[])
+}
+
+fn json_response_with_headers<T: Serialize>(
+    value: T,
+    ttl: u32,
+    extra_headers: &[(&str, String)],
+) -> Result<Response<Body>, HttpError> {
     let value = serde_json::to_string(&value)?;
-    Ok(Response::builder()
+    let mut builder = Response::builder()
         .header("Content-Type", "application/json")
-        .header("Cache-Control", format!("public, max-age={:}", ttl))
-        .body(Body::from(value))
-        .unwrap())
+        .header("Cache-Control", format!("public, max-age={:}", ttl));
+    for (name, value) in extra_headers {
+        builder = builder.header(*name, value.as_str());
+    }
+    Ok(builder.body(Body::from(value)).unwrap())
 }
 
 // fn json_maybe_error_response<T: Serialize>(

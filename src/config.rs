@@ -65,6 +65,7 @@ pub struct Config {
     pub rest_default_max_address_summary_txs: usize,
     pub rest_max_mempool_page_size: usize,
     pub rest_max_mempool_txid_page_size: usize,
+    pub rest_max_address_txs_filter_scan: usize,
     pub electrum_max_line_size: usize,
     pub electrum_max_subscriptions: usize,
     pub electrum_max_clients: usize,
@@ -271,6 +272,12 @@ impl Config {
                 Arg::with_name("rest_max_mempool_txid_page_size")
                     .long("rest-max-mempool-txid-page-size")
                     .help("The maximum number of transactions returned by the paginated /mempool/txids/page endpoint.")
+                    .default_value("10000")
+            )
+            .arg(
+                Arg::with_name("rest_max_address_txs_filter_scan")
+                    .long("rest-max-address-txs-filter-scan")
+                    .help("The maximum number of address history transactions examined per request when the address/[address]/txs endpoint is called with the direction, amount or time filters.")
                     .default_value("10000")
             )
             .arg(
@@ -582,6 +589,11 @@ impl Config {
             rest_max_mempool_txid_page_size: value_t_or_exit!(
                 m,
                 "rest_max_mempool_txid_page_size",
+                usize
+            ),
+            rest_max_address_txs_filter_scan: value_t_or_exit!(
+                m,
+                "rest_max_address_txs_filter_scan",
                 usize
             ),
             electrum_max_line_size: value_t_or_exit!(m, "electrum_max_line_size", usize),

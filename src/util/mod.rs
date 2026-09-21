@@ -1,6 +1,7 @@
 mod block;
 mod script;
 mod transaction;
+mod tx_filter;
 
 pub mod bincode_util;
 pub mod electrum_merkle;
@@ -15,6 +16,7 @@ pub use self::transaction::{
     extract_tx_prevouts, has_prevout, is_coinbase, is_spendable, serialize_outpoint,
     sigops::transaction_sigop_count, TransactionStatus, TxInput,
 };
+pub use self::tx_filter::{TxDirection, TxHistoryFilter};
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
