@@ -12,7 +12,7 @@ error_chain! {
 
         Interrupt(sig: i32) {
             description("Interruption by external signal")
-            display("Iterrupted by signal {}", sig)
+            display("Interrupted by signal {}", sig)
         }
 
         TooManyUtxos(limit: usize) {
