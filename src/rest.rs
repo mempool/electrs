@@ -70,17 +70,15 @@ const TTL_LONG: u32 = 157_784_630; // ttl for static resources (5 years)
 const TTL_SHORT: u32 = 10; // ttl for volatie resources
 const TTL_MEMPOOL_RECENT: u32 = 5; // ttl for GET /mempool/recent
 const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
-const MAX_HISTORY_TXS: usize = 100;
 
 // internal api prefix
 const INTERNAL_PREFIX: &str = "internal";
 
-fn capped_max_txs(query_params: &HashMap<String, String>, default: usize, limit: usize) -> usize {
+fn capped_max_txs(query_params: &HashMap<String, String>, page_size: usize) -> usize {
     query_params
         .get("max_txs")
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(default)
-        .min(limit)
+        .map_or(page_size, |max_txs| max_txs.min(page_size))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -977,11 +975,7 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_max_mempool_txs,
-                MAX_HISTORY_TXS,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -1080,11 +1074,7 @@ fn handle_request(
                 })
                 .collect();
 
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_max_mempool_txs,
-                MAX_HISTORY_TXS,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -1169,11 +1159,7 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_chain_txs_per_page,
-                MAX_HISTORY_TXS,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_default_chain_txs_per_page);
 
             let mut txs = query
                 .chain()
@@ -1216,11 +1202,8 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_max_address_summary_txs,
-                config.rest_default_max_address_summary_txs,
-            );
+            let max_txs =
+                capped_max_txs(&query_params, config.rest_default_max_address_summary_txs);
 
             let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
                 find_txid(txid, &query.mempool(), query.chain())
@@ -1295,11 +1278,8 @@ fn handle_request(
                 .collect();
 
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_max_address_summary_txs,
-                config.rest_default_max_address_summary_txs,
-            );
+            let max_txs =
+                capped_max_txs(&query_params, config.rest_default_max_address_summary_txs);
 
             let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
                 find_txid(txid, &query.mempool(), query.chain())
@@ -1344,11 +1324,7 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_default_max_mempool_txs,
-                MAX_HISTORY_TXS,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
 
             let txs = query
                 .mempool()
@@ -1738,11 +1714,7 @@ fn handle_request(
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_max_mempool_txid_page_size,
-                config.rest_max_mempool_txid_page_size,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_max_mempool_txid_page_size);
             json_response(
                 query.mempool().txids_page(max_txs, last_seen_txid),
                 TTL_SHORT,
@@ -1797,11 +1769,7 @@ fn handle_request(
             None,
         ) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = capped_max_txs(
-                &query_params,
-                config.rest_max_mempool_page_size,
-                config.rest_max_mempool_page_size,
-            );
+            let max_txs = capped_max_txs(&query_params, config.rest_max_mempool_page_size);
             let txs = query
                 .mempool()
                 .txs_page(max_txs, last_seen_txid)
@@ -2255,16 +2223,19 @@ mod tests {
     fn test_capped_max_txs() {
         let mut query_params = HashMap::new();
 
-        assert_eq!(capped_max_txs(&query_params, 25, 100), 25);
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
 
         query_params.insert("max_txs".to_string(), "20".to_string());
-        assert_eq!(capped_max_txs(&query_params, 25, 100), 20);
+        assert_eq!(capped_max_txs(&query_params, 25), 20);
 
-        query_params.insert("max_txs".to_string(), "1000000".to_string());
-        assert_eq!(capped_max_txs(&query_params, 25, 100), 100);
+        query_params.insert("max_txs".to_string(), "26".to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
+
+        query_params.insert("max_txs".to_string(), usize::MAX.to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
 
         query_params.insert("max_txs".to_string(), "invalid".to_string());
-        assert_eq!(capped_max_txs(&query_params, 25, 100), 25);
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
     }
 
     #[test]

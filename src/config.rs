@@ -246,13 +246,13 @@ impl Config {
             .arg(
                 Arg::with_name("rest_default_chain_txs_per_page")
                     .long("rest-default-chain-txs-per-page")
-                    .help("The default number of on-chain transactions returned by the txs endpoints.")
+                    .help("The default and maximum number of on-chain transactions returned by the txs endpoints.")
                     .default_value("25")
             )
             .arg(
                 Arg::with_name("rest_default_max_mempool_txs")
                     .long("rest-default-max-mempool-txs")
-                    .help("The default number of mempool transactions returned by the txs endpoints.")
+                    .help("The default and maximum number of mempool transactions returned by the txs endpoints.")
                     .default_value("50")
             )
             .arg(
@@ -264,13 +264,13 @@ impl Config {
             .arg(
                 Arg::with_name("rest_max_mempool_page_size")
                     .long("rest-max-mempool-page-size")
-                    .help("The maximum number of transactions returned by the paginated /internal/mempool/txs endpoint.")
+                    .help("The default and maximum number of transactions returned by the paginated /internal/mempool/txs endpoint.")
                     .default_value("1000")
             )
             .arg(
                 Arg::with_name("rest_max_mempool_txid_page_size")
                     .long("rest-max-mempool-txid-page-size")
-                    .help("The maximum number of transactions returned by the paginated /mempool/txids/page endpoint.")
+                    .help("The default and maximum number of transactions returned by the paginated /mempool/txids/page endpoint.")
                     .default_value("10000")
             )
             .arg(
