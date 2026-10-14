@@ -32,7 +32,7 @@ use rayon::iter::ParallelIterator;
 use tokio::sync::oneshot;
 
 use hyperlocal::UnixServerExt;
-use std::{cmp, fs};
+use std::fs;
 #[cfg(feature = "liquid")]
 use {
     crate::elements::{peg::PegoutValue, AssetMeta, AssetSorting, IssuanceValue},
@@ -73,6 +73,13 @@ const CONF_FINAL: usize = 10; // reorgs deeper than this are considered unlikely
 
 // internal api prefix
 const INTERNAL_PREFIX: &str = "internal";
+
+fn capped_max_txs(query_params: &HashMap<String, String>, page_size: usize) -> usize {
+    query_params
+        .get("max_txs")
+        .and_then(|value| value.parse::<usize>().ok())
+        .map_or(page_size, |max_txs| max_txs.min(page_size))
+}
 
 #[derive(Serialize, Deserialize)]
 struct BlockValue {
@@ -968,10 +975,7 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_default_max_mempool_txs);
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -1070,10 +1074,7 @@ fn handle_request(
                 })
                 .collect();
 
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_default_max_mempool_txs);
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
             let after_txid = query_params
                 .get("after_txid")
                 .and_then(|s| s.parse::<Txid>().ok());
@@ -1158,10 +1159,7 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_default_chain_txs_per_page);
+            let max_txs = capped_max_txs(&query_params, config.rest_default_chain_txs_per_page);
 
             let mut txs = query
                 .chain()
@@ -1204,13 +1202,8 @@ fn handle_request(
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = cmp::min(
-                config.rest_default_max_address_summary_txs,
-                query_params
-                    .get("max_txs")
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(config.rest_default_max_address_summary_txs),
-            );
+            let max_txs =
+                capped_max_txs(&query_params, config.rest_default_max_address_summary_txs);
 
             let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
                 find_txid(txid, &query.mempool(), query.chain())
@@ -1285,13 +1278,8 @@ fn handle_request(
                 .collect();
 
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = cmp::min(
-                config.rest_default_max_address_summary_txs,
-                query_params
-                    .get("max_txs")
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(config.rest_default_max_address_summary_txs),
-            );
+            let max_txs =
+                capped_max_txs(&query_params, config.rest_default_max_address_summary_txs);
 
             let last_seen_txid_location = if let Some(txid) = &last_seen_txid {
                 find_txid(txid, &query.mempool(), query.chain())
@@ -1336,10 +1324,7 @@ fn handle_request(
             None,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_default_max_mempool_txs);
+            let max_txs = capped_max_txs(&query_params, config.rest_default_max_mempool_txs);
 
             let txs = query
                 .mempool()
@@ -1729,10 +1714,7 @@ fn handle_request(
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_max_mempool_txid_page_size);
+            let max_txs = capped_max_txs(&query_params, config.rest_max_mempool_txid_page_size);
             json_response(
                 query.mempool().txids_page(max_txs, last_seen_txid),
                 TTL_SHORT,
@@ -1787,10 +1769,7 @@ fn handle_request(
             None,
         ) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
-            let max_txs = query_params
-                .get("max_txs")
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(config.rest_max_mempool_page_size);
+            let max_txs = capped_max_txs(&query_params, config.rest_max_mempool_page_size);
             let txs = query
                 .mempool()
                 .txs_page(max_txs, last_seen_txid)
@@ -2234,11 +2213,30 @@ impl From<address::AddressError> for HttpError {
 
 #[cfg(test)]
 mod tests {
-    use super::{confirmed_after_txid, TxidLocation};
+    use super::{capped_max_txs, confirmed_after_txid, TxidLocation};
     use crate::chain::Txid;
     use crate::rest::HttpError;
     use serde_json::Value;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_capped_max_txs() {
+        let mut query_params = HashMap::new();
+
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
+
+        query_params.insert("max_txs".to_string(), "20".to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 20);
+
+        query_params.insert("max_txs".to_string(), "26".to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
+
+        query_params.insert("max_txs".to_string(), usize::MAX.to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
+
+        query_params.insert("max_txs".to_string(), "invalid".to_string());
+        assert_eq!(capped_max_txs(&query_params, 25), 25);
+    }
 
     #[test]
     fn test_parse_query_param() {
