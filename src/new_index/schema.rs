@@ -998,6 +998,12 @@ impl ChainQuery {
         let mut processed_items = 0;
         let mut lastblock = None;
 
+        // If we need to iterate over 500 history entries to
+        // get one utxo then your address is too active and should be
+        // throttled.
+        // TODO: Think of better way to throttle.
+        let tx_history_limit = limit * 500;
+
         for (history, blockid) in history_iter {
             processed_items += 1;
             lastblock = Some(blockid.hash);
@@ -1017,6 +1023,9 @@ impl ChainQuery {
             // abort if the utxo set size excedees the limit at any point in time
             if utxos.len() > limit {
                 bail!(ErrorKind::TooManyUtxos(limit))
+            }
+            if processed_items > tx_history_limit {
+                bail!(ErrorKind::TooManyTxs(tx_history_limit))
             }
         }
 
