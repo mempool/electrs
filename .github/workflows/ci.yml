@@ -12,7 +12,7 @@ jobs:
     name: Compile Check
     runs-on: mempool-ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Rust
         uses: './.github/actions/ci-rust-setup'
         with:
@@ -23,7 +23,7 @@ jobs:
     name: Formatter
     runs-on: mempool-ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Rust
         uses: './.github/actions/ci-rust-setup'
         with:
@@ -34,7 +34,7 @@ jobs:
     name: Run Tests
     runs-on: mempool-ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Rust
         uses: './.github/actions/ci-rust-setup'
         with:
@@ -47,9 +47,9 @@ jobs:
     env:
       FREEBSD_VER: "14.3"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Cache dependencies for FreeBSD
-      uses: actions/cache@v3
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           .cargohome/registry
@@ -57,7 +57,7 @@ jobs:
           target
         key: freebsd-${{ env.FREEBSD_VER }}-cargo-checks-${{ hashFiles('**/Cargo.lock') }}
     - name: Compile Checks in FreeBSD
-      uses: vmactions/freebsd-vm@v1
+      uses: vmactions/freebsd-vm@d0518f912576ae759075aa00fb9fe27037940271 # v1.5.4
       with:
         usesh: true
         release: "${{ env.FREEBSD_VER }}"
@@ -97,7 +97,7 @@ jobs:
           '-F electrum-discovery,liquid',
         ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Rust
         uses: './.github/actions/ci-rust-setup'
         with:
