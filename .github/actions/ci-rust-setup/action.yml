@@ -12,25 +12,30 @@ inputs:
     description: 'A comma separated list of extra components you want to install'
     required: false
   toolchain:
-    description: 'The toolchain to use. If not specified, the rust-toolchain file will be used'
+    description: 'The toolchain to use. If not specified, the channel from rust-toolchain.toml will be used'
     required: false
 
 runs:
   using: composite
   steps:
-    - name: Get toolchain from input OR rust-toolchain file
+    - name: Get toolchain from input OR rust-toolchain.toml file
       id: gettoolchain
       shell: bash
+      env:
+        RUST_TOOLCHAIN: ${{ inputs.toolchain }}
       run: |-
-        RUST_TOOLCHAIN="${{ inputs.toolchain }}"
-        if [ ! -f rust-toolchain ] && [ -z "${RUST_TOOLCHAIN}" ]; then
-          echo "***ERROR*** NEED toolchain INPUT OR rust-toolchain FILE IN ROOT OF REPOSITORY" >&2
+        if [ ! -f rust-toolchain.toml ] && [ -z "${RUST_TOOLCHAIN}" ]; then
+          echo "***ERROR*** NEED toolchain INPUT OR rust-toolchain.toml FILE IN ROOT OF REPOSITORY" >&2
           exit 1
         fi
         if [ -z "${RUST_TOOLCHAIN}" ]; then
-          RUST_TOOLCHAIN="$(cat rust-toolchain)"
+          RUST_TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          if [ -z "${RUST_TOOLCHAIN}" ]; then
+            echo "***ERROR*** NEED channel IN rust-toolchain.toml" >&2
+            exit 1
+          fi
         fi
-        echo "toolchain=\"${RUST_TOOLCHAIN}\"" >> $GITHUB_OUTPUT
+        echo "toolchain=${RUST_TOOLCHAIN}" >> "$GITHUB_OUTPUT"
     - name: Install ${{ steps.gettoolchain.outputs.toolchain }} Rust toolchain
       id: toolchain
       # Commit date is Nov 18, 2024
