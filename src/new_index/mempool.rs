@@ -441,7 +441,8 @@ impl Mempool {
             mempool.remove(txids_to_remove);
             // A transaction added out of band since step 1 is missing from old_txids, so it can't
             // have been removed even if it was confirmed meanwhile. Keep the previous height then:
-            // it still holds, since that transaction was unconfirmed when it was added.
+            // it still holds, since add_by_txid only adds a transaction that is unconfirmed while it
+            // holds the write lock.
             if mempool.out_of_band_adds == out_of_band_adds || tip_height.is_none() {
                 mempool.tip_height = tip_height;
             }

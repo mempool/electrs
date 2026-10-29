@@ -628,9 +628,13 @@ impl Daemon {
     pub fn getmempooltx(&self, txhash: &Txid) -> Result<Transaction> {
         let value = self.request(
             "getrawtransaction",
-            json!([txhash.to_string(), /*verbose=*/ false]),
+            json!([txhash.to_string(), /*verbose=*/ true]),
         )?;
-        tx_from_value(value)
+        // With -txindex, getrawtransaction also returns confirmed transactions.
+        if value.get("blockhash").is_some() {
+            return Err(format!("{txhash} is already confirmed").into());
+        }
+        tx_from_value(value.get("hex").cloned().unwrap_or(Value::Null))
     }
 
     pub fn getmempooltxids(&self) -> Result<HashSet<Txid>> {
