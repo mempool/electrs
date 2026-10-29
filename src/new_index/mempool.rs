@@ -40,6 +40,9 @@ pub struct Mempool {
     // at or below it has been removed. Clients that apply blocks from the daemon directly can
     // use it to tell whether this mempool view has caught up with a block they already applied.
     tip_height: Option<usize>,
+    // Bumped by every transaction added outside update(), such as a broadcast, so that update()
+    // can tell whether one raced with it.
+    out_of_band_adds: u64,
 
     // monitoring
     latency: HistogramVec, // mempool requests latency
@@ -77,6 +80,7 @@ impl Mempool {
                 Instant::now() - Duration::from_secs(config.mempool_backlog_stats_ttl),
             ),
             tip_height: None,
+            out_of_band_adds: 0,
             latency: metrics.histogram_vec(
                 HistogramOpts::new("mempool_latency", "Mempool requests latency (in seconds)"),
                 &["part"],
@@ -402,11 +406,12 @@ impl Mempool {
     pub fn update(mempool: &RwLock<Mempool>, daemon: &Daemon) -> Result<()> {
         // 1. Start the metrics timer and get the current mempool txids
         // [LOCK] Takes read lock for whole scope.
-        let (_timer, old_txids) = {
+        let (_timer, old_txids, out_of_band_adds) = {
             let mempool = mempool.read().unwrap();
             (
                 mempool.latency.with_label_values(&["update"]).start_timer(),
                 mempool.unique_txids(),
+                mempool.out_of_band_adds,
             )
         };
 
@@ -414,9 +419,14 @@ impl Mempool {
         // block's transactions from its mempool atomically with connecting the block, so none of
         // the txids can be confirmed at or below this height.
         // [LOCK] No lock taken. Wait for RPC request. Get lists of remove/add txes.
-        let tip_height = daemon
-            .getblockcount()
-            .chain_err(|| "failed to get block count from daemon")?;
+        // The height is optional metadata: if it can't be read, update the mempool without it.
+        let tip_height = match daemon.getblockcount() {
+            Ok(height) => Some(height),
+            Err(e) => {
+                warn!("failed to get block count from daemon: {}", e);
+                None
+            }
+        };
         let all_txids = daemon
             .getmempooltxids()
             .chain_err(|| "failed to update mempool from daemon")?;
@@ -429,7 +439,12 @@ impl Mempool {
         {
             let mut mempool = mempool.write().unwrap();
             mempool.remove(txids_to_remove);
-            mempool.tip_height = Some(tip_height);
+            // A transaction added out of band since step 1 is missing from old_txids, so it can't
+            // have been removed even if it was confirmed meanwhile. Keep the previous height then:
+            // it still holds, since that transaction was unconfirmed when it was added.
+            if mempool.out_of_band_adds == out_of_band_adds || tip_height.is_none() {
+                mempool.tip_height = tip_height;
+            }
         }
 
         // 4. Download the new transactions from the daemon's mempool
@@ -476,6 +491,7 @@ impl Mempool {
                     )
                     .into());
                 }
+                self.out_of_band_adds += 1;
             }
         }
         Ok(())
