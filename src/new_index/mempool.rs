@@ -486,13 +486,14 @@ impl Mempool {
     pub fn add_by_txid(&mut self, daemon: &Daemon, txid: &Txid) -> Result<()> {
         if !self.txstore.contains_key(txid) {
             if let Ok(tx) = daemon.getmempooltx(txid) {
+                // Count before adding: add() stores the transaction even when it can't index it.
+                self.out_of_band_adds += 1;
                 if self.add(vec![tx]) == 0 {
                     return Err(format!(
                         "Unable to add {txid} to mempool likely due to missing parents."
                     )
                     .into());
                 }
-                self.out_of_band_adds += 1;
             }
         }
         Ok(())
