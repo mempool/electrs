@@ -545,6 +545,13 @@ impl Daemon {
         parse_hash(&self.request("getbestblockhash", json!([]))?)
     }
 
+    pub fn getblockcount(&self) -> Result<usize> {
+        self.request("getblockcount", json!([]))?
+            .as_u64()
+            .map(|count| count as usize)
+            .ok_or_else(|| "invalid block count".into())
+    }
+
     pub fn getblockheader(&self, blockhash: &BlockHash) -> Result<BlockHeader> {
         header_from_value(self.request(
             "getblockheader",

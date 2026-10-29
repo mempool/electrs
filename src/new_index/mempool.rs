@@ -36,6 +36,10 @@ pub struct Mempool {
     edges: HashMap<OutPoint, (Txid, u32)>,          // OutPoint -> (spending_txid, spending_vin)
     recent: BoundedVecDeque<TxOverview>,            // The N most recent txs to enter the mempool
     backlog_stats: (BacklogStats, Instant),
+    // Daemon chain height when the last update took its snapshot: every transaction confirmed
+    // at or below it has been removed. Clients that apply blocks from the daemon directly can
+    // use it to tell whether this mempool view has caught up with a block they already applied.
+    tip_height: Option<usize>,
 
     // monitoring
     latency: HistogramVec, // mempool requests latency
@@ -72,6 +76,7 @@ impl Mempool {
                 BacklogStats::default(),
                 Instant::now() - Duration::from_secs(config.mempool_backlog_stats_ttl),
             ),
+            tip_height: None,
             latency: metrics.histogram_vec(
                 HistogramOpts::new("mempool_latency", "Mempool requests latency (in seconds)"),
                 &["part"],
@@ -386,6 +391,10 @@ impl Mempool {
         &self.backlog_stats.0
     }
 
+    pub fn tip_height(&self) -> Option<usize> {
+        self.tip_height
+    }
+
     pub fn unique_txids(&self) -> HashSet<Txid> {
         HashSet::from_iter(self.txstore.keys().cloned())
     }
@@ -401,8 +410,13 @@ impl Mempool {
             )
         };
 
-        // 2. Get all the mempool txids from the RPC.
+        // 2. Get the chain height, then all the mempool txids from the RPC. The daemon removes a
+        // block's transactions from its mempool atomically with connecting the block, so none of
+        // the txids can be confirmed at or below this height.
         // [LOCK] No lock taken. Wait for RPC request. Get lists of remove/add txes.
+        let tip_height = daemon
+            .getblockcount()
+            .chain_err(|| "failed to get block count from daemon")?;
         let all_txids = daemon
             .getmempooltxids()
             .chain_err(|| "failed to update mempool from daemon")?;
@@ -411,8 +425,12 @@ impl Mempool {
 
         // 3. Remove missing transactions. Even if we are unable to download new transactions from
         // the daemon, we still want to remove the transactions that are no longer in the mempool.
-        // [LOCK] Write lock is released at the end of the call to remove().
-        mempool.write().unwrap().remove(txids_to_remove);
+        // [LOCK] Takes Write lock for whole scope.
+        {
+            let mut mempool = mempool.write().unwrap();
+            mempool.remove(txids_to_remove);
+            mempool.tip_height = Some(tip_height);
+        }
 
         // 4. Download the new transactions from the daemon's mempool
         // [LOCK] No lock taken, waiting for RPC response.

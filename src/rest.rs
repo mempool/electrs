@@ -1710,7 +1710,13 @@ fn handle_request(
             json_response(query.mempool().backlog_stats(), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), None, None, None) => {
-            json_response(query.mempool().txids(), TTL_SHORT)
+            let mempool = query.mempool();
+            let mut resp = json_response(mempool.txids(), TTL_SHORT)?;
+            if let Some(height) = mempool.tip_height() {
+                resp.headers_mut()
+                    .insert("X-Mempool-Tip-Height", HeaderValue::from(height));
+            }
+            Ok(resp)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
             let last_seen_txid = last_seen_txid.and_then(|txid| txid.parse::<Txid>().ok());
