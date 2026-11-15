@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs;
-use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::IpAddr;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::FileTypeExt;
@@ -39,6 +39,12 @@ use crate::util::{
 
 const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(1, 4);
 const MAX_HEADERS: usize = 2016;
+
+/// How long a connection waits for a PROXY-protocol (HAProxy) header to arrive
+/// before giving up and treating the peer as a direct client. Proxies send the
+/// header immediately after the TCP handshake, so this only bounds misbehaving
+/// or non-proxied clients (and caps any delay to shutdown).
+const PROXY_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(feature = "electrum-discovery")]
 use crate::electrum::DiscoveryManager;
@@ -161,6 +167,7 @@ struct Connection {
     server_features: Arc<ServerFeatures>,
     haproxy_depth: usize,
     proxy_client: Option<SocketAddr>,
+    client_string: String,
     connections_per_client: usize,
     client_counts: Arc<Mutex<HashMap<IpAddr, usize>>>,
     registered_ip: Option<IpAddr>,
@@ -201,6 +208,7 @@ impl Connection {
             server_features,
             haproxy_depth,
             proxy_client: None,
+            client_string: String::new(),
             connections_per_client,
             client_counts,
             registered_ip: None,
@@ -509,6 +517,7 @@ impl Connection {
             .latency
             .with_label_values(&[method])
             .start_timer();
+        trace!("[{}] rpc {} {:?}", self.client_string(), method, params);
         let result = match method {
             "blockchain.block.header" => self.blockchain_block_header(params),
             "blockchain.block.headers" => self.blockchain_block_headers(params),
@@ -537,7 +546,13 @@ impl Connection {
             "server.add_peer" => self.server_add_peer(params),
 
             &_ => {
-                warn!("rpc unknown method #{} {} {:?}", id, method, params);
+                warn!(
+                    "[{}] rpc unknown method #{} {} {:?}",
+                    self.client_string(),
+                    id,
+                    method,
+                    params
+                );
                 return Ok(json_rpc_error(
                     format!("Method {method} not found"),
                     Some(id),
@@ -551,7 +566,8 @@ impl Connection {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(e) => {
                 warn!(
-                    "rpc #{} {} {:?} failed: {}",
+                    "[{}] rpc #{} {} {:?} failed: {}",
+                    self.client_string(),
                     id,
                     method,
                     params,
@@ -620,21 +636,21 @@ impl Connection {
 
     /// A human-readable identifier for the connected client, preferring the
     /// HAProxy-reported address (when present) over the direct peer address.
-    fn client_string(&self) -> String {
-        match self.proxy_client {
-            Some(addr) => format!("{} via {}", addr, self.stream.addr_string()),
-            None => self.stream.addr_string(),
-        }
+    fn client_string(&self) -> &str {
+        &self.client_string
     }
 
-    /// Resolves the PROXY-protocol parse result into the client address at the
-    /// configured `electrum-haproxy-depth` layer. A depth of 0, a missing PROXY
-    /// header, or a non-existent layer all leave the client unidentified.
-    fn set_proxy_client(&mut self, addresses: Option<Vec<SocketAddr>>) {
-        self.proxy_client = match (self.haproxy_depth, addresses) {
-            (0, _) | (_, None) => None,
-            (depth, Some(addrs)) => addrs.get(depth - 1).copied(),
-        };
+    fn populate_client_string(&mut self) {
+        if self.client_string.is_empty() {
+            let mut s = match self.proxy_client {
+                Some(addr) => format!("{addr}"),
+                None => self.stream.addr_string(),
+            };
+            if s.is_empty() {
+                s.push_str("(unnamed)");
+            }
+            self.client_string = s;
+        }
     }
 
     /// Registers this connection against its client key (the HAProxy-reported IP
@@ -697,7 +713,7 @@ impl Connection {
             crossbeam_channel::select! {
                 recv(self.chan.receiver()) -> msg => {
                     let msg = msg.chain_err(|| "channel closed")?;
-                    trace!("RPC {:?}", msg);
+                    trace!("[{}] RPC {:?}", self.client_string(), msg);
                     match msg {
                         Message::Request(line) => {
                             self.last_request_at = Instant::now();
@@ -713,14 +729,6 @@ impl Connection {
                         Message::Done => {
                             self.chan.close();
                             return Ok(());
-                        }
-                        Message::Proxy(addresses) => {
-                            self.set_proxy_client(addresses);
-                            if let Err(e) = self.register_client() {
-                                info!("[{}] {}", self.client_string(), e);
-                                self.chan.close();
-                                return Ok(());
-                            }
                         }
                     }
                 }
@@ -781,117 +789,15 @@ impl Connection {
         }
     }
 
-    /// Reads and parses any PROXY-protocol (HAProxy) headers found at the very
-    /// start of the connection. Returns the source address reported by each
-    /// proxy layer (outermost first), or `None` if no PROXY header was present,
-    /// together with any bytes that were read past the header(s) and belong to
-    /// the Electrum request stream.
-    fn read_proxy_headers(
-        stream: &mut ConnectionStream,
-    ) -> Result<(Option<Vec<SocketAddr>>, Vec<u8>)> {
-        // Upper bound on how much we are willing to buffer while looking for
-        // PROXY headers, to avoid unbounded memory use from a slow/malicious peer.
-        const MAX_PROXY_HEADER_SIZE: usize = 4096;
-
-        enum Step {
-            Parsed(usize, Option<SocketAddr>),
-            NeedMore,
-            Done,
-        }
-
-        let mut buf: Vec<u8> = Vec::with_capacity(256);
-        let mut addrs: Vec<SocketAddr> = Vec::new();
-        let mut saw_proxy = false;
-        let mut chunk = [0u8; 256];
-
-        loop {
-            // Parse as many complete, stacked PROXY headers as the buffer allows.
-            let need_more = loop {
-                if buf.is_empty() {
-                    break true;
-                }
-                let step = match ppp::HeaderResult::parse(&buf) {
-                    ppp::HeaderResult::V2(Ok(header)) => {
-                        Step::Parsed(header.len(), proxy_v2_source(&header.addresses))
-                    }
-                    ppp::HeaderResult::V1(Ok(header)) => {
-                        Step::Parsed(header.header.len(), proxy_v1_source(&header.addresses))
-                    }
-                    other => {
-                        if other.is_incomplete() {
-                            Step::NeedMore
-                        } else {
-                            Step::Done
-                        }
-                    }
-                };
-                match step {
-                    Step::Parsed(consumed, src) => {
-                        saw_proxy = true;
-                        if let Some(src) = src {
-                            addrs.push(src);
-                        }
-                        if consumed == 0 || consumed > buf.len() {
-                            // Defensive: never spin forever on a degenerate parse.
-                            break false;
-                        }
-                        buf.drain(..consumed);
-                    }
-                    Step::NeedMore => break true,
-                    Step::Done => break false,
-                }
-            };
-
-            if !need_more {
-                break;
-            }
-            if buf.len() > MAX_PROXY_HEADER_SIZE {
-                bail!(
-                    "PROXY protocol header too large (exceeds {} bytes)",
-                    MAX_PROXY_HEADER_SIZE
-                );
-            }
-            let n = stream
-                .read(&mut chunk)
-                .chain_err(|| "failed to read PROXY protocol header")?;
-            if n == 0 {
-                // EOF before another complete header; stop with what we have.
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-        }
-
-        let result = if saw_proxy { Some(addrs) } else { None };
-        Ok((result, buf))
-    }
-
     fn handle_requests(
         stream: ConnectionStream,
         tx: crossbeam_channel::Sender<Message>,
         max_line_size: usize,
     ) -> Result<()> {
-        let mut stream = stream;
-
-        // Consume any PROXY-protocol (HAProxy) headers at the very start of the
-        // connection before treating the stream as Electrum requests. We always
-        // consume them — even when HAProxy support is disabled
-        // (`electrum-haproxy-depth = 0`) — so that PROXY headers sent by an
-        // accidentally-misconfigured upstream are stripped instead of corrupting
-        // the Electrum request parser.
-        //
-        // Crucially, `read_proxy_headers` only ever buffers bytes it has already
-        // read from the socket: when no PROXY header is present it returns those
-        // bytes as `leftover` so the start of the first Electrum request is
-        // preserved rather than discarded.
-        //
-        // The parsed addresses are forwarded over the channel; whether they are
-        // actually used to identify the client is decided later based on the
-        // configured `electrum-haproxy-depth` (a depth of 0 ignores them).
-        let (proxy_addrs, leftover) = Connection::read_proxy_headers(&mut stream)?;
-        tx.send(Message::Proxy(proxy_addrs))
-            .chain_err(|| "channel closed")?;
-
-        let mut reader = BufReader::new(Cursor::new(leftover).chain(stream));
+        // Any PROXY-protocol header was already consumed by `resolve_proxy`
+        // before this thread started; the stream replays any leftover bytes
+        // (the start of the first request) ahead of the live socket.
+        let mut reader = BufReader::new(stream);
         loop {
             let mut line = Vec::<u8>::new();
             // Read up to max_line_size + 1 bytes to detect oversized lines
@@ -930,15 +836,33 @@ impl Connection {
 
     pub fn run(mut self) {
         self.stats.clients.inc();
-        let stream = self.stream.try_clone().expect("failed to clone TcpStream");
         let tx = self.chan.sender();
+
+        // Resolve any HAProxy header before doing anything else so the client
+        // address is known up-front (for logging and the per-client limit).
+        // Unlike the best-effort probe on the shared acceptor loop, this runs on
+        // the connection's own thread and blocks (bounded by
+        // PROXY_HEADER_TIMEOUT) until the header arrives, so a header split
+        // across TCP segments is not missed and mis-attributed to the peer IP.
+        self.proxy_client = self
+            .stream
+            .resolve_proxy_blocking(self.haproxy_depth, PROXY_HEADER_TIMEOUT);
+        if let Err(e) = self.register_client() {
+            self.populate_client_string();
+            info!("[{}] {}", self.client_string(), e);
+            self.stats.clients.dec();
+            return;
+        }
+        // Populate the client string for logging purposes.
+        self.populate_client_string();
+        info!("[{}] connection established", self.client_string());
 
         let die_please = self.die_please.take().unwrap();
         let (reply_killer, reply_receiver) = crossbeam_channel::unbounded();
 
         // We create a clone of the stream and put it in an Arc
         // This will drop at the end of the function.
-        let arc_stream = Arc::new(self.stream.try_clone().expect("failed to clone TcpStream"));
+        let arc_stream = Arc::new(self.stream.try_clone().expect("failed to clone stream"));
         // We don't want to keep the stream alive until SIGINT
         // It should drop (close) no matter what.
         let maybe_stream = Arc::downgrade(&arc_stream);
@@ -949,6 +873,11 @@ impl Connection {
         });
 
         let max_line_size = self.max_line_size;
+        // self.stream contains the leftovers from the PROXY read.
+        // Since clones don't copy the leftovers we need to send the one with leftovers
+        // to the reader thread and keep the clone for sending replies.
+        let mut stream = self.stream.try_clone().expect("failed to clone stream");
+        std::mem::swap(&mut self.stream, &mut stream);
         let child = spawn_thread("reader", move || {
             Connection::handle_requests(stream, tx, max_line_size)
         });
@@ -965,13 +894,13 @@ impl Connection {
             .sub(self.status_hashes.len() as i64);
         self.unregister_client();
 
-        let addr = self.client_string();
-        debug!("[{}] shutting down connection", addr);
+        debug!("[{}] shutting down connection", self.client_string());
         // Drop the Arc so that the stream properly closes.
         drop(arc_stream);
         let _ = self.stream.shutdown(Shutdown::Both);
+        info!("[{}] connection closed", self.client_string());
         if let Err(err) = child.join().expect("receiver panicked") {
-            error!("[{}] receiver failed: {}", addr, err);
+            error!("[{}] receiver failed: {}", self.client_string(), err);
         }
     }
 }
@@ -1023,11 +952,6 @@ pub enum Message {
     Request(String),
     PeriodicUpdate,
     Done,
-    /// The result of parsing zero or more PROXY-protocol (HAProxy) headers at
-    /// the start of the connection. `None` means no PROXY header was present;
-    /// `Some(addrs)` holds the source address reported by each proxy layer,
-    /// outermost first.
-    Proxy(Option<Vec<SocketAddr>>),
 }
 
 pub enum Notification {
@@ -1176,7 +1100,7 @@ impl RPC {
                     HashMap::new();
                 let (garbage_sender, garbage_receiver) = crossbeam_channel::unbounded();
 
-                while let Some(stream) = acceptor.receiver().recv().unwrap() {
+                while let Some(mut stream) = acceptor.receiver().recv().unwrap() {
                     // Clean up finished threads before checking connection limit
                     while let Ok(id) = garbage_receiver.try_recv() {
                         if let Some((thread, killer)) = threads.remove(&id) {
@@ -1199,8 +1123,18 @@ impl RPC {
                         continue;
                     }
 
+                    // Does not block. Caches the proxied IP.
+                    // Explicitly sets the stream to non-blocking mode
+                    // so that this thread does not block.
+                    // NGINX should send the proxy header
+                    // immediately after the TCP handshake.
+                    // But even if it doesn't we will just return None,
+                    // and the connection will show up as something generic
+                    // when using unix sockets to forward. Like (unknown)
+                    stream.resolve_proxy(haproxy_depth);
+
+                    // explicitly scope the shadowed variables for the new thread
                     let addr = stream.addr_string();
-                    // explicitely scope the shadowed variables for the new thread
                     let query = Arc::clone(&query);
                     let senders = Arc::clone(&senders);
                     let stats = Arc::clone(&stats);
@@ -1217,7 +1151,7 @@ impl RPC {
 
                     let spawned = spawn_thread("peer", move || {
                         let addr = stream.addr_string();
-                        info!("[{}] connected peer", addr);
+                        info!("[{addr}] client connected");
                         let conn = Connection::new(
                             query,
                             stream,
@@ -1236,7 +1170,7 @@ impl RPC {
                         );
                         senders.lock().unwrap().push(conn.chan.sender());
                         conn.run();
-                        info!("[{}] disconnected peer", addr);
+                        info!("[{addr}] client disconnected");
                         let _ = killer_clone.send(());
                         let _ = garbage_sender.send(std::thread::current().id());
                     });
@@ -1354,8 +1288,12 @@ impl ConnectionListener {
 
     fn accept(&self) -> std::result::Result<ConnectionStream, std::io::Error> {
         match self {
-            Self::Tcp(c) => c.accept().map(|(l, r)| ConnectionStream::Tcp(l, r)),
-            Self::Unix(c, p) => c.accept().map(|(l, r)| ConnectionStream::Unix(l, r, p)),
+            Self::Tcp(c) => c
+                .accept()
+                .map(|(l, r)| ConnectionStream::new(ConnectionStreamInner::Tcp(l, r))),
+            Self::Unix(c, p) => c
+                .accept()
+                .map(|(l, r)| ConnectionStream::new(ConnectionStreamInner::Unix(l, r, p))),
         }
     }
 
@@ -1391,16 +1329,18 @@ impl ConnectionListener {
     }
 }
 
-enum ConnectionStream {
+enum ConnectionStreamInner {
     Tcp(TcpStream, std::net::SocketAddr),
     Unix(UnixStream, std::os::unix::net::SocketAddr, &'static Path),
 }
 
-impl ConnectionStream {
-    fn addr_string(&self) -> String {
-        match self {
-            ConnectionStream::Tcp(_, a) => format!("{a}"),
-            ConnectionStream::Unix(_, a, _) => format!("{a:?}"),
+impl ConnectionStreamInner {
+    fn addr_string(&self, proxy: Option<SocketAddr>) -> String {
+        match (self, proxy) {
+            (ConnectionStreamInner::Tcp(_, a), None) => format!("{a}"),
+            (ConnectionStreamInner::Tcp(_, a), Some(p)) => format!("{p} (via {a})"),
+            (ConnectionStreamInner::Unix(_, a, _), None) => format!("{a:?}"),
+            (ConnectionStreamInner::Unix(_, a, _), Some(p)) => format!("{p} (via {a:?})"),
         }
     }
 
@@ -1408,62 +1348,417 @@ impl ConnectionStream {
     /// connections have no IP and return `None`.
     fn direct_ip(&self) -> Option<IpAddr> {
         match self {
-            ConnectionStream::Tcp(_, a) => Some(a.ip()),
-            ConnectionStream::Unix(..) => None,
+            ConnectionStreamInner::Tcp(_, a) => Some(a.ip()),
+            ConnectionStreamInner::Unix(..) => None,
         }
     }
 
     fn try_clone(&self) -> std::io::Result<Self> {
         Ok(match self {
-            ConnectionStream::Tcp(s, a) => ConnectionStream::Tcp(s.try_clone()?, *a),
-            ConnectionStream::Unix(s, a, p) => ConnectionStream::Unix(s.try_clone()?, a.clone(), p),
+            ConnectionStreamInner::Tcp(s, a) => ConnectionStreamInner::Tcp(s.try_clone()?, *a),
+            ConnectionStreamInner::Unix(s, a, p) => {
+                ConnectionStreamInner::Unix(s.try_clone()?, a.clone(), p)
+            }
         })
     }
 
     fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
         match self {
-            ConnectionStream::Tcp(s, _) => s.shutdown(how),
-            ConnectionStream::Unix(s, _, _) => s.shutdown(how),
+            ConnectionStreamInner::Tcp(s, _) => s.shutdown(how),
+            ConnectionStreamInner::Unix(s, _, _) => s.shutdown(how),
         }
     }
 
     fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
         match self {
-            ConnectionStream::Tcp(s, _) => s.set_nonblocking(nonblocking),
-            ConnectionStream::Unix(s, _, _) => s.set_nonblocking(nonblocking),
+            ConnectionStreamInner::Tcp(s, _) => s.set_nonblocking(nonblocking),
+            ConnectionStreamInner::Unix(s, _, _) => s.set_nonblocking(nonblocking),
         }
     }
 
-    #[cfg(feature = "electrum-discovery")]
-    fn ip(&self) -> Option<IpAddr> {
+    fn read_timeout(&self) -> std::io::Result<Option<Duration>> {
         match self {
-            ConnectionStream::Tcp(_, a) => Some(a.ip()),
-            ConnectionStream::Unix(_, _, _) => None,
+            ConnectionStreamInner::Tcp(s, _) => s.read_timeout(),
+            ConnectionStreamInner::Unix(s, _, _) => s.read_timeout(),
+        }
+    }
+
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            ConnectionStreamInner::Tcp(s, _) => s.set_read_timeout(timeout),
+            ConnectionStreamInner::Unix(s, _, _) => s.set_read_timeout(timeout),
+        }
+    }
+
+    /// Returns `Some(true)` if the stream is non-blocking, `Some(false)` if it is
+    /// blocking, and `None` if the platform does not support checking the mode,
+    /// or if an error occurred while checking.
+    fn get_nonblocking(&self) -> Option<bool> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd as _;
+            let fd = match self {
+                ConnectionStreamInner::Tcp(s, _) => s.as_raw_fd(),
+                ConnectionStreamInner::Unix(s, _, _) => s.as_raw_fd(),
+            };
+            // Safety: fcntl is safe to call with F_GETFL,
+            // and we check the return value for errors.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 {
+                return None;
+            }
+            Some(flags & libc::O_NONBLOCK != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            // non-unix platforms not supported.
+            None
         }
     }
 }
 
-impl Write for ConnectionStream {
+impl Write for ConnectionStreamInner {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            ConnectionStream::Tcp(s, _) => s.write(buf),
-            ConnectionStream::Unix(s, _, _) => s.write(buf),
+            ConnectionStreamInner::Tcp(s, _) => s.write(buf),
+            ConnectionStreamInner::Unix(s, _, _) => s.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            ConnectionStream::Tcp(s, _) => s.flush(),
-            ConnectionStream::Unix(s, _, _) => s.flush(),
+            ConnectionStreamInner::Tcp(s, _) => s.flush(),
+            ConnectionStreamInner::Unix(s, _, _) => s.flush(),
         }
+    }
+}
+
+impl Read for ConnectionStreamInner {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            ConnectionStreamInner::Tcp(s, _) => s.read(buf),
+            ConnectionStreamInner::Unix(s, _, _) => s.read(buf),
+        }
+    }
+}
+
+/// A client connection stream that strips any PROXY-protocol (HAProxy) headers
+/// found at the very start of the connection before exposing the underlying
+/// Electrum request bytes. Bytes read while probing for headers but not part of
+/// a header are buffered in `leftover` and replayed on the next `read`.
+struct ConnectionStream {
+    inner: ConnectionStreamInner,
+    /// Bytes read past the PROXY header(s) (or while probing) that belong to the
+    /// Electrum request stream and must be returned before reading from `inner`.
+    leftover: Vec<u8>,
+    /// Whether we already attempted to parse PROXY headers.
+    proxy_parsed: bool,
+    /// The HAProxy-reported client address resolved at the configured depth.
+    proxy_client: Option<SocketAddr>,
+}
+
+impl ConnectionStream {
+    fn new(inner: ConnectionStreamInner) -> Self {
+        ConnectionStream {
+            inner,
+            leftover: Vec::new(),
+            proxy_parsed: false,
+            proxy_client: None,
+        }
+    }
+
+    fn addr_string(&self) -> String {
+        let proxy = self.proxy_client.as_ref().copied();
+        self.inner.addr_string(proxy)
+    }
+
+    fn direct_ip(&self) -> Option<IpAddr> {
+        self.inner.direct_ip()
+    }
+
+    fn try_clone(&self) -> std::io::Result<Self> {
+        // The buffered leftover and parse state belong to the reader that
+        // performed the PROXY probe; clones (used for shutdown) start clean.
+        Ok(ConnectionStream::new(self.inner.try_clone()?))
+    }
+
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        self.inner.shutdown(how)
+    }
+
+    fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        self.inner.set_nonblocking(nonblocking)
+    }
+
+    #[cfg(feature = "electrum-discovery")]
+    fn ip(&self) -> Option<IpAddr> {
+        self.inner.direct_ip()
+    }
+
+    /// Probes the start of the connection for PROXY-protocol (HAProxy) headers
+    /// and resolves the client address at the configured `haproxy_depth`.
+    ///
+    /// Parsing is non-destructive to the request stream: it reads in
+    /// non-blocking mode (restoring the previous mode afterwards), so a client
+    /// that opens a socket without sending data is not blocked on. Any bytes
+    /// read that turn out not to be a PROXY header are buffered and replayed on
+    /// the next `read`. A PROXY header split across TCP segments is only
+    /// partially available on the first probe; in that case probing is *not*
+    /// marked finished and resumes from the buffered bytes on a later probe.
+    /// Returns `None` when HAProxy support is disabled (depth 0), when reading
+    /// would block, or when no header is found.
+    fn resolve_proxy(&mut self, haproxy_depth: usize) -> Option<SocketAddr> {
+        if let Some(client) = self.proxy_client {
+            return Some(client);
+        }
+        if self.proxy_parsed {
+            return None;
+        }
+        // Always probe once (non-blocking) to strip any PROXY header and/or
+        // buffer already-available request bytes into `leftover`, even when
+        // haproxy_depth == 0 (addresses ignored).
+
+        let nonblocking_status = self.inner.get_nonblocking().unwrap_or(false);
+        if self.inner.set_nonblocking(true).is_err() {
+            return None;
+        }
+        let (addrs, complete) = self.read_proxy_headers(None);
+        let _ = self.inner.set_nonblocking(nonblocking_status);
+
+        self.finish_proxy_resolve(addrs, complete, haproxy_depth)
+    }
+
+    /// Like [`resolve_proxy`](Self::resolve_proxy), but blocks (up to `timeout`)
+    /// waiting for the PROXY header instead of giving up the moment a read would
+    /// block.
+    ///
+    /// The best-effort probe on the shared acceptor loop must never block, so a
+    /// PROXY header that hasn't fully arrived yet (e.g. split across TCP segments
+    /// or delayed after the handshake) is missed there. The later request-stream
+    /// reads still strip the header, but discard the parsed address, which would
+    /// permanently mis-attribute the connection to the direct peer IP for
+    /// logging and per-client limiting. Running this once per connection on its
+    /// own thread resolves the address up-front. The wait is bounded so a client
+    /// that never sends a header can't stall the thread.
+    fn resolve_proxy_blocking(
+        &mut self,
+        haproxy_depth: usize,
+        timeout: Duration,
+    ) -> Option<SocketAddr> {
+        // With PROXY support disabled there is no address to wait for; fall back
+        // to the non-blocking probe so the connection isn't blocked waiting for
+        // its first request.
+        if haproxy_depth == 0 {
+            return self.resolve_proxy(haproxy_depth);
+        }
+        if let Some(client) = self.proxy_client {
+            return Some(client);
+        }
+        if self.proxy_parsed {
+            return None;
+        }
+
+        let nonblocking_status = self.inner.get_nonblocking().unwrap_or(false);
+        let _ = self.inner.set_nonblocking(false);
+        let prev_timeout = self.inner.read_timeout().ok().flatten();
+
+        let (addrs, complete) = self.read_proxy_headers(Some(Instant::now() + timeout));
+
+        // Restore the socket's blocking/timeout state for the request-stream
+        // reads that follow (the underlying socket is shared by all clones).
+        let _ = self.inner.set_read_timeout(prev_timeout);
+        let _ = self.inner.set_nonblocking(nonblocking_status);
+
+        self.finish_proxy_resolve(addrs, complete, haproxy_depth)
+    }
+
+    /// Records the parse outcome from [`read_proxy_headers`](Self::read_proxy_headers)
+    /// and resolves the client address at the configured `haproxy_depth`.
+    fn finish_proxy_resolve(
+        &mut self,
+        addrs: Option<Vec<SocketAddr>>,
+        complete: bool,
+        haproxy_depth: usize,
+    ) -> Option<SocketAddr> {
+        // Only stop probing once parsing has definitively finished. If a PROXY
+        // header was only partially available (e.g. split across TCP segments),
+        // `complete` is false and the buffered partial header is resumed on the
+        // next probe instead of being misread as request data.
+        if complete {
+            self.proxy_parsed = true;
+        }
+
+        if haproxy_depth == 0 {
+            return None;
+        }
+
+        let addrs = addrs.filter(|addrs| !addrs.is_empty())?;
+        self.proxy_client = addrs.get(haproxy_depth - 1).copied();
+        self.proxy_client
+    }
+
+    /// Reads and parses any stacked PROXY headers available on the socket.
+    /// Parsing resumes from any bytes buffered by a previous probe
+    /// (`self.leftover`), so a PROXY header split across TCP segments is
+    /// completed rather than misread as request data.
+    ///
+    /// With `deadline` of `None` the caller has put the socket in non-blocking
+    /// mode and a `WouldBlock` simply ends the probe. With `deadline` set the
+    /// reads block (each bounded by the time remaining until the deadline) so
+    /// the header can be resolved up-front on the connection thread.
+    ///
+    /// Returns the source address reported by each proxy layer (or `None` if no
+    /// header was present) together with a `complete` flag. `complete` is `true`
+    /// once parsing has definitively finished (a full header chain followed by
+    /// non-PROXY data, EOF, a read error, or the size cap). When `complete` is
+    /// `false`, the buffered bytes are the partial start of a PROXY header and
+    /// must be resumed on the next probe. Any bytes read past the header(s) are
+    /// stored in `self.leftover`.
+    fn read_proxy_headers(&mut self, deadline: Option<Instant>) -> (Option<Vec<SocketAddr>>, bool) {
+        // Upper bound on how much we buffer while looking for PROXY headers, to
+        // avoid unbounded memory use from a slow/malicious peer.
+        const MAX_PROXY_HEADER_SIZE: usize = 4096;
+
+        enum Step {
+            Parsed(usize, Option<SocketAddr>),
+            NeedMore,
+            Done,
+        }
+
+        // Resume from any bytes buffered by a previous probe (a PROXY header
+        // split across TCP segments); `leftover` is empty on the first probe.
+        let mut buf: Vec<u8> = std::mem::take(&mut self.leftover);
+        let mut addrs: Vec<SocketAddr> = Vec::new();
+        let mut saw_proxy = false;
+        let mut complete = false;
+        let mut chunk = [0u8; 256];
+
+        loop {
+            // Parse as many complete, stacked PROXY headers as the buffer allows.
+            let need_more = loop {
+                if buf.is_empty() {
+                    break true;
+                }
+                let step = match ppp::HeaderResult::parse(&buf) {
+                    ppp::HeaderResult::V2(Ok(header)) => {
+                        Step::Parsed(header.len(), proxy_v2_source(&header.addresses))
+                    }
+                    ppp::HeaderResult::V1(Ok(header)) => {
+                        Step::Parsed(header.header.len(), proxy_v1_source(&header.addresses))
+                    }
+                    other => {
+                        if other.is_incomplete() {
+                            Step::NeedMore
+                        } else {
+                            Step::Done
+                        }
+                    }
+                };
+                match step {
+                    Step::Parsed(consumed, src) => {
+                        saw_proxy = true;
+                        if let Some(src) = src {
+                            addrs.push(src);
+                        }
+                        if consumed == 0 || consumed > buf.len() {
+                            // Defensive: never spin forever on a degenerate parse.
+                            complete = true;
+                            break false;
+                        }
+                        buf.drain(..consumed);
+                    }
+                    // Incomplete header: more bytes are needed to finish parsing it.
+                    Step::NeedMore => break true,
+                    // Not (or no longer) a PROXY header: the rest is request data.
+                    Step::Done => {
+                        complete = true;
+                        break false;
+                    }
+                }
+            };
+
+            if !need_more {
+                break;
+            }
+            if buf.len() > MAX_PROXY_HEADER_SIZE {
+                // Give up on an over-long header: treat the bytes as request data.
+                complete = true;
+                break;
+            }
+            // When resolving in blocking mode, bound the total wait so a slow or
+            // stalled peer can't hold the connection thread indefinitely: each
+            // read gets the time remaining until the deadline.
+            if let Some(deadline) = deadline {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    break;
+                };
+                if remaining.is_zero() {
+                    break;
+                }
+                let _ = self.inner.set_read_timeout(Some(remaining));
+            }
+            match self.inner.read(&mut chunk) {
+                Ok(0) => {
+                    // EOF before another complete header.
+                    complete = true;
+                    break;
+                }
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                // No (more) data available right now: a non-blocking probe with
+                // nothing buffered, or a blocking read that hit the deadline. If a
+                // partial PROXY header is buffered, parsing stays incomplete and
+                // resumes on the next probe (`complete` remains false).
+                Err(ref e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    break
+                }
+                Err(_) => {
+                    complete = true;
+                    break;
+                }
+            }
+        }
+
+        // Whatever wasn't consumed as a PROXY header is either request data (when
+        // parsing completed) or the partial start of a PROXY header to resume.
+        self.leftover = buf;
+        (saw_proxy.then_some(addrs), complete)
+    }
+}
+
+impl Write for ConnectionStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
 impl Read for ConnectionStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            ConnectionStream::Tcp(s, _) => s.read(buf),
-            ConnectionStream::Unix(s, _, _) => s.read(buf),
+        // Ensure PROXY headers are stripped before exposing any bytes to the caller.
+        if !self.proxy_parsed {
+            let nonblocking_status = self.inner.get_nonblocking().unwrap_or(false);
+            let _ = self.inner.set_nonblocking(false);
+            let (_addrs, complete) = self.read_proxy_headers(None);
+            let _ = self.inner.set_nonblocking(nonblocking_status);
+            if complete {
+                self.proxy_parsed = true;
+            }
         }
+
+        if !self.leftover.is_empty() {
+            let n = self.leftover.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.leftover[..n]);
+            self.leftover.drain(..n);
+            return Ok(n);
+        }
+        self.inner.read(buf)
     }
 }
