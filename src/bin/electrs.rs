@@ -122,17 +122,25 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         if let Err(err) = signal.wait(Duration::from_millis(config.main_loop_delay), true) {
             info!("stopping server: {}", err);
 
-            electrs::util::spawn_thread("shutdown-thread-checker", || {
-                let mut counter = 40;
-                let interval_ms = 500;
+            // Watchdog: give the graceful shutdown ~5 seconds to close all TCP
+            // connections. If it hasn't completed by then (e.g. clients holding
+            // sockets open with slow/zombie connections), force the process to
+            // exit so we don't hang indefinitely.
+            electrs::util::spawn_thread("shutdown-watchdog", || {
+                let timeout = Duration::from_secs(5);
+                let interval = Duration::from_millis(500);
+                let mut elapsed = Duration::ZERO;
 
-                while counter > 0 {
+                while elapsed < timeout {
                     electrs::util::with_spawned_threads(|threads| {
                         debug!("Threads during shutdown: {:?}", threads);
                     });
-                    std::thread::sleep(std::time::Duration::from_millis(interval_ms));
-                    counter -= 1;
+                    std::thread::sleep(interval);
+                    elapsed += interval;
                 }
+
+                error!("graceful shutdown timed out after 5 seconds, forcing exit");
+                process::exit(0);
             });
 
             rest_server.stop();
