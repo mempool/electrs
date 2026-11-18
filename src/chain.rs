@@ -75,6 +75,8 @@ pub enum Network {
     #[cfg(not(feature = "liquid"))]
     Testnet4,
     #[cfg(not(feature = "liquid"))]
+    Testnet5,
+    #[cfg(not(feature = "liquid"))]
     Regtest,
     #[cfg(not(feature = "liquid"))]
     Signet,
@@ -100,11 +102,16 @@ pub const LIQUID_TESTNET_PARAMS: address::AddressParams = address::AddressParams
 #[cfg(not(feature = "liquid"))]
 const TESTNET4_MAGIC: u32 = 0x283f161c;
 
+/// Magic for testnet5, 0x46495645 (from BIP95) with flipped endianness.
+#[cfg(not(feature = "liquid"))]
+const TESTNET5_MAGIC: u32 = 0x45564946;
+
 impl Network {
     #[cfg(not(feature = "liquid"))]
     pub fn magic(self) -> u32 {
         match self {
             Self::Testnet4 => TESTNET4_MAGIC,
+            Self::Testnet5 => TESTNET5_MAGIC,
             _ => {
                 let magic = BNetwork::from(self).magic();
                 u32::from_le_bytes(magic.to_bytes())
@@ -162,6 +169,8 @@ impl Network {
         return vec![
             "mainnet".to_string(),
             "testnet".to_string(),
+            "testnet4".to_string(),
+            "testnet5".to_string(),
             "regtest".to_string(),
             "signet".to_string(),
         ];
@@ -192,6 +201,10 @@ pub fn bitcoin_genesis_hash(network: Network) -> bitcoin::BlockHash {
             "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
         )
         .unwrap();
+        static ref TESTNET5_GENESIS: bitcoin::BlockHash = bitcoin::BlockHash::from_str(
+            "00000000000008c1637e7d3252dc1c333d4546fd6fff6a474b200d674a91d497"
+        )
+        .unwrap();
         static ref REGTEST_GENESIS: bitcoin::BlockHash =
             genesis_block(BNetwork::Regtest).block_hash();
         static ref SIGNET_GENESIS: bitcoin::BlockHash =
@@ -202,6 +215,7 @@ pub fn bitcoin_genesis_hash(network: Network) -> bitcoin::BlockHash {
         Network::Bitcoin => *BITCOIN_GENESIS,
         Network::Testnet => *TESTNET_GENESIS,
         Network::Testnet4 => *TESTNET4_GENESIS,
+        Network::Testnet5 => *TESTNET5_GENESIS,
         Network::Regtest => *REGTEST_GENESIS,
         Network::Signet => *SIGNET_GENESIS,
     }
@@ -245,6 +259,8 @@ impl From<&str> for Network {
             #[cfg(not(feature = "liquid"))]
             "testnet4" => Network::Testnet4,
             #[cfg(not(feature = "liquid"))]
+            "testnet5" => Network::Testnet5,
+            #[cfg(not(feature = "liquid"))]
             "regtest" => Network::Regtest,
             #[cfg(not(feature = "liquid"))]
             "signet" => Network::Signet,
@@ -268,6 +284,9 @@ impl From<Network> for BNetwork {
             Network::Bitcoin => BNetwork::Bitcoin,
             Network::Testnet => BNetwork::Testnet,
             Network::Testnet4 => BNetwork::Testnet4,
+            // rust-bitcoin has no testnet5 network. This conversion is only used for
+            // address encoding, which testnet5 shares with testnet4 (BIP95).
+            Network::Testnet5 => BNetwork::Testnet4,
             Network::Regtest => BNetwork::Regtest,
             Network::Signet => BNetwork::Signet,
         }
