@@ -173,7 +173,7 @@ do
 	RPC_PASS=$(grep 'rpcpassword=' "${DAEMON_CONF}"|cut -d = -f2|head -1)
 
 	# override limits based on hostname
-	if [ "${NODENAME}" = "node201" ] || [ "${NODENAME}" = "node214" ];then
+	if [ "${NODENAME}" = "node214" ];then
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 		ELECTRUM_MAX_LINE_SIZE=16777216 # 16 MiB
