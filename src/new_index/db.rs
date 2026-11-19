@@ -162,7 +162,10 @@ impl DB {
     }
 
     pub fn enable_auto_compaction(&self) {
-        let opts = [("disable_auto_compactions", "false")];
+        // RocksDB's default ttl (30 days) makes it rewrite every file older than
+        // that. The index is almost never updated in place, so those rewrites
+        // reclaim nearly nothing. Size-triggered compaction stays enabled.
+        let opts = [("ttl", "0"), ("disable_auto_compactions", "false")];
         self.db.set_options(&opts).unwrap();
     }
 
@@ -326,5 +329,38 @@ pub fn open_raw_db<T: rocksdb::ThreadMode>(
         OpenMode::ReadWrite => {
             rocksdb::DBWithThreadMode::<T>::open(&db_opts, path).expect("failed to open RocksDB")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // RocksDB writes a new OPTIONS-<n> file whenever options change.
+    fn latest_options_file(dir: &Path) -> String {
+        let latest = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter_map(|name| Some((name.strip_prefix("OPTIONS-")?.parse::<u64>().ok()?, name)))
+            .max()
+            .unwrap();
+        std::fs::read_to_string(dir.join(latest.1)).unwrap()
+    }
+
+    #[test]
+    fn enable_auto_compaction_disables_ttl() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DB {
+            db: open_raw_db(dir.path(), OpenMode::ReadWrite),
+        };
+        let options = latest_options_file(dir.path());
+        assert!(options.contains("  ttl=2592000\n"));
+        assert!(options.contains("  disable_auto_compactions=true\n"));
+
+        db.enable_auto_compaction();
+
+        let options = latest_options_file(dir.path());
+        assert!(options.contains("  ttl=0\n"));
+        assert!(options.contains("  disable_auto_compactions=false\n"));
     }
 }
