@@ -8,7 +8,7 @@ DB_FOLDER=/electrs
 ASSET_DB_ARGS=()
 NODENAME=$(hostname|cut -d . -f1)
 LOCATION=$(hostname|cut -d . -f2)
-USAGE="Usage: $0 (mainnet|testnet|signet|liquid|liquidtestnet) [popular-scripts]"
+USAGE="Usage: $0 (mainnet|testnet|testnet4|testnet5|signet|liquid|liquidtestnet) [popular-scripts]"
 
 # load rust if necessary
 if [ -e "${HOME}/.cargo/env" ];then
@@ -55,6 +55,11 @@ case "${1}" in
 		NETWORK=testnet4
 		THREADS=$((NPROC / 8))
 		CRONJOB_TIMING="17 4 * * *"
+	;;
+	testnet5)
+		NETWORK=testnet5
+		THREADS=$((NPROC / 8))
+		CRONJOB_TIMING="23 4 * * *"
 	;;
 	signet)
 		NETWORK=signet
@@ -223,7 +228,7 @@ do
 		ELECTRUM_MAX_SUBSCRIPTIONS=100000
 		ELECTRUM_MAX_CLIENTS=10000
 	fi
-	if [ "${NETWORK}" = "testnet4" ];then
+	if [ "${NETWORK}" = "testnet4" ] || [ "${NETWORK}" = "testnet5" ];then
 		UTXOS_LIMIT=9000
 		ELECTRUM_TXS_LIMIT=9000
 		ELECTRUM_MAX_LINE_SIZE=16777216 # 16 MiB
